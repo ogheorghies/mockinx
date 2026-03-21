@@ -11,4 +11,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yml = "0.0.12"
 rand = "0.8"
+bytes = "1"
+tokio-stream = "0.1"
 yttp = { path = "../yttp" }
