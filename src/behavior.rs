@@ -95,8 +95,8 @@ pub fn parse_behavior(v: &Value) -> Result<BehaviorSpec, ParseError> {
         .as_object()
         .ok_or_else(|| ParseError("behavior must be an object".into()))?;
 
-    let concurrency = parse_concurrency(obj)?;
-    let rate_limit = parse_rate_limit(obj)?;
+    let concurrency = parse_conn(obj)?;
+    let rate_limit = parse_rps(obj)?;
     let fail = parse_fail(obj)?;
     let timeout = parse_timeout(obj)?;
     let sequence = parse_sequence(obj)?;
@@ -112,23 +112,23 @@ pub fn parse_behavior(v: &Value) -> Result<BehaviorSpec, ParseError> {
     })
 }
 
-fn parse_concurrency(obj: &Map<String, Value>) -> Result<Option<ConcurrencySpec>, ParseError> {
-    let val = match obj.get("concurrency") {
+fn parse_conn(obj: &Map<String, Value>) -> Result<Option<ConcurrencySpec>, ParseError> {
+    let val = match obj.get("conn") {
         None => return Ok(None),
         Some(v) => v,
     };
 
     let c_obj = val
         .as_object()
-        .ok_or_else(|| ParseError("concurrency must be an object".into()))?;
+        .ok_or_else(|| ParseError("conn must be an object".into()))?;
 
     let max = c_obj
         .get("max")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| ParseError("concurrency requires 'max' as a positive integer".into()))?;
+        .ok_or_else(|| ParseError("conn requires 'max' as a positive integer".into()))?;
 
     if max == 0 {
-        return Err(ParseError("concurrency max must be > 0".into()));
+        return Err(ParseError("conn max must be > 0".into()));
     }
 
     let over = parse_overflow_action(c_obj)?;
@@ -179,28 +179,28 @@ fn parse_overflow_action(obj: &Map<String, Value>) -> Result<OverflowAction, Par
     }
 }
 
-fn parse_rate_limit(obj: &Map<String, Value>) -> Result<Option<RateLimitSpec>, ParseError> {
-    let val = match obj.get("rate_limit") {
+fn parse_rps(obj: &Map<String, Value>) -> Result<Option<RateLimitSpec>, ParseError> {
+    let val = match obj.get("rps") {
         None => return Ok(None),
         Some(v) => v,
     };
 
     let rl_obj = val
         .as_object()
-        .ok_or_else(|| ParseError("rate_limit must be an object".into()))?;
+        .ok_or_else(|| ParseError("rps must be an object".into()))?;
 
-    let rps = rl_obj
-        .get("rps")
+    let max = rl_obj
+        .get("max")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| ParseError("rate_limit requires 'rps' as a positive integer".into()))?;
+        .ok_or_else(|| ParseError("rps requires 'max' as a positive integer".into()))?;
 
     let over_val = rl_obj
         .get("over")
-        .ok_or_else(|| ParseError("rate_limit requires 'over' reply".into()))?;
+        .ok_or_else(|| ParseError("rps requires 'over' reply".into()))?;
     let over = parse_reply(over_val)?;
 
     Ok(Some(RateLimitSpec {
-        rps: rps as u32,
+        rps: max as u32,
         over,
     }))
 }
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn parse_concurrency_reject() {
         let spec = parse_behavior(&json!({
-            "concurrency": {"max": 5, "over": {"s": 429}}
+            "conn": {"max": 5, "over": {"s": 429}}
         }))
         .unwrap();
         let c = spec.concurrency.unwrap();
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn parse_concurrency_block() {
         let spec = parse_behavior(&json!({
-            "concurrency": {"max": 5, "over": "block"}
+            "conn": {"max": 5, "over": "block"}
         }))
         .unwrap();
         assert_eq!(spec.concurrency.unwrap().over, OverflowAction::Block);
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn parse_concurrency_block_timeout() {
         let spec = parse_behavior(&json!({
-            "concurrency": {"max": 5, "over": {"block": "3s", "then": {"s": 429, "b": "timeout"}}}
+            "conn": {"max": 5, "over": {"block": "3s", "then": {"s": 429, "b": "timeout"}}}
         }))
         .unwrap();
         match spec.concurrency.unwrap().over {
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn parse_concurrency_max_zero_error() {
         assert!(parse_behavior(&json!({
-            "concurrency": {"max": 0, "over": "block"}
+            "conn": {"max": 0, "over": "block"}
         }))
         .is_err());
     }
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn parse_concurrency_missing_over_error() {
         assert!(parse_behavior(&json!({
-            "concurrency": {"max": 5}
+            "conn": {"max": 5}
         }))
         .is_err());
     }
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn parse_rate_limit() {
         let spec = parse_behavior(&json!({
-            "rate_limit": {"rps": 100, "over": {"s": 429}}
+            "rps": {"max": 100, "over": {"s": 429}}
         }))
         .unwrap();
         let rl = spec.rate_limit.unwrap();
@@ -401,9 +401,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_rate_limit_missing_rps_error() {
+    fn parse_rps_missing_max_error() {
         assert!(parse_behavior(&json!({
-            "rate_limit": {"over": {"s": 429}}
+            "rps": {"over": {"s": 429}}
         }))
         .is_err());
     }
@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn parse_multiple_behaviors() {
         let spec = parse_behavior(&json!({
-            "concurrency": {"max": 5, "over": "block"},
+            "conn": {"max": 5, "over": "block"},
             "timeout": "30s",
             "fail": {"rate": 0.1, "reply": {"s": 500}}
         }))

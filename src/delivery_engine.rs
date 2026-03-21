@@ -36,13 +36,10 @@ const DEFAULT_CHUNK_SIZE: usize = 8192;
 ///
 /// For `pick` specs, selects one profile by weighted random.
 pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> DeliveryStream {
-    // Handle pick: select one profile
-    let spec = resolve_pick(spec, rng);
-
     let first_byte_delay = spec
         .first_byte
         .as_ref()
-        .map(|fb| fb.delay.sample(rng).as_std());
+        .map(|fb| fb.sample(rng).as_std());
 
     let drop_after_bytes = match &spec.drop {
         Some(DropSpec::AfterBytes(r)) => Some(r.sample(rng).bytes() as usize),
@@ -62,8 +59,8 @@ pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> Delive
         let size = chunk.size.sample(rng).bytes() as usize;
         let delay = chunk.delay.sample(rng).as_std();
         (size.max(1), Some(delay))
-    } else if let Some(ref duration_range) = spec.duration {
-        let duration = duration_range.sample(rng).as_std();
+    } else if let Some(ref span_range) = spec.span {
+        let duration = span_range.sample(rng).as_std();
         let chunk_size = DEFAULT_CHUNK_SIZE;
         let num_chunks = (body.len() + chunk_size - 1) / chunk_size.max(1);
         let delay = if num_chunks > 1 {
@@ -102,24 +99,6 @@ pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> Delive
         sleep: None,
         started: false,
     }
-}
-
-fn resolve_pick<'a>(spec: &'a DeliverySpec, rng: &mut impl Rng) -> std::borrow::Cow<'a, DeliverySpec> {
-    if let Some(ref pick) = spec.pick {
-        let r: f64 = rng.r#gen();
-        let mut cumulative = 0.0;
-        for entry in pick {
-            cumulative += entry.p;
-            if r < cumulative {
-                return std::borrow::Cow::Owned(entry.spec.clone());
-            }
-        }
-        // Fallback to last entry (floating-point edge case)
-        if let Some(last) = pick.last() {
-            return std::borrow::Cow::Owned(last.spec.clone());
-        }
-    }
-    std::borrow::Cow::Borrowed(spec)
 }
 
 impl Stream for DeliveryStream {
@@ -226,9 +205,7 @@ mod tests {
     async fn first_byte_delay() {
         let body = b"hello".to_vec();
         let spec = DeliverySpec {
-            first_byte: Some(FirstByteSpec {
-                delay: Range::Fixed(Duration(std::time::Duration::from_millis(200))),
-            }),
+            first_byte: Some(Range::Fixed(Duration(std::time::Duration::from_millis(200)))),
             ..Default::default()
         };
         let start = Instant::now();
@@ -259,10 +236,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duration_spreads_body() {
+    async fn span_spreads_body() {
         let body = vec![0u8; 10000];
         let spec = DeliverySpec {
-            duration: Some(Range::Fixed(Duration(std::time::Duration::from_millis(500)))),
+            span: Some(Range::Fixed(Duration(std::time::Duration::from_millis(500)))),
             ..Default::default()
         };
         let start = Instant::now();
@@ -346,50 +323,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pick_selects_profiles() {
-        // Over many runs, both profiles should be selected
-        let body = vec![0u8; 1000];
-        let spec = DeliverySpec {
-            pick: Some(vec![
-                PickEntry {
-                    p: 0.5,
-                    spec: DeliverySpec::default(),
-                },
-                PickEntry {
-                    p: 0.5,
-                    spec: DeliverySpec {
-                        drop: Some(DropSpec::AfterBytes(Range::Fixed(ByteSize(100)))),
-                        ..Default::default()
-                    },
-                },
-            ]),
-            ..Default::default()
-        };
-
-        let mut full_count = 0;
-        let mut dropped_count = 0;
-        for seed in 0..50 {
-            let mut rng = StdRng::seed_from_u64(seed);
-            let stream = deliver(body.clone(), &spec, &mut rng);
-            let chunks: Vec<Bytes> = stream.map(|r| r.unwrap()).collect().await;
-            let total: usize = chunks.iter().map(|c| c.len()).sum();
-            if total == 1000 {
-                full_count += 1;
-            } else {
-                dropped_count += 1;
-            }
-        }
-        assert!(full_count > 5, "too few full deliveries: {full_count}");
-        assert!(dropped_count > 5, "too few dropped deliveries: {dropped_count}");
-    }
-
-    #[tokio::test]
     async fn first_byte_delay_plus_chunking() {
         let body = vec![0u8; 300];
         let spec = DeliverySpec {
-            first_byte: Some(FirstByteSpec {
-                delay: Range::Fixed(Duration(std::time::Duration::from_millis(100))),
-            }),
+            first_byte: Some(Range::Fixed(Duration(std::time::Duration::from_millis(100)))),
             chunk: Some(ChunkSpec {
                 size: Range::Fixed(ByteSize(100)),
                 delay: Range::Fixed(Duration(std::time::Duration::from_millis(50))),

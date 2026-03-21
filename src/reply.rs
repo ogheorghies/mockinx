@@ -88,12 +88,13 @@ fn parse_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
     match obj.get("b") {
         None => Ok(BodySpec::None),
         Some(Value::Object(b)) => {
-            if b.contains_key("rand") {
-                parse_rand_body(b)
-            } else if b.contains_key("pattern") {
-                parse_pattern_body(b)
+            // Directives use ! suffix to distinguish from literal data
+            if b.contains_key("rand!") {
+                parse_rand_body(b, "rand!")
+            } else if b.contains_key("pattern!") {
+                parse_pattern_body(b, "pattern!")
             } else {
-                // Regular JSON object literal
+                // Regular JSON object literal (no ! = literal data)
                 Ok(BodySpec::Literal(Value::Object(b.clone())))
             }
         }
@@ -101,9 +102,9 @@ fn parse_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
     }
 }
 
-fn parse_rand_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
+fn parse_rand_body(obj: &Map<String, Value>, key: &str) -> Result<BodySpec, ParseError> {
     let rand_obj = obj
-        .get("rand")
+        .get(key)
         .and_then(|v| v.as_object())
         .ok_or_else(|| ParseError("rand must be an object".into()))?;
 
@@ -123,9 +124,9 @@ fn parse_rand_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
     Ok(BodySpec::Rand { size, seed })
 }
 
-fn parse_pattern_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
+fn parse_pattern_body(obj: &Map<String, Value>, key: &str) -> Result<BodySpec, ParseError> {
     let pattern_obj = obj
-        .get("pattern")
+        .get(key)
         .and_then(|v| v.as_object())
         .ok_or_else(|| ParseError("pattern must be an object".into()))?;
 
@@ -191,7 +192,7 @@ mod tests {
 
     #[test]
     fn parse_rand_body() {
-        let v = yttp::parse("{s: 200, b: {rand: {size: 10kb, seed: 7}}}").unwrap();
+        let v = json!({"s": 200, "b": {"rand!": {"size": "10kb", "seed": 7}}});
         let reply = parse_reply(&v).unwrap();
         match &reply.body {
             BodySpec::Rand { size, seed } => {
@@ -204,7 +205,7 @@ mod tests {
 
     #[test]
     fn parse_pattern_body() {
-        let v = yttp::parse("{s: 200, b: {pattern: {repeat: abc, size: 1mb}}}").unwrap();
+        let v = json!({"s": 200, "b": {"pattern!": {"repeat": "abc", "size": "1mb"}}});
         let reply = parse_reply(&v).unwrap();
         match &reply.body {
             BodySpec::Pattern { repeat, size } => {
@@ -275,25 +276,25 @@ mod tests {
 
     #[test]
     fn parse_error_rand_missing_size() {
-        let v = json!({"b": {"rand": {"seed": 7}}});
+        let v = json!({"b": {"rand!": {"seed": 7}}});
         assert!(parse_reply(&v).is_err());
     }
 
     #[test]
     fn parse_error_rand_missing_seed() {
-        let v = json!({"b": {"rand": {"size": "10kb"}}});
+        let v = json!({"b": {"rand!": {"size": "10kb"}}});
         assert!(parse_reply(&v).is_err());
     }
 
     #[test]
     fn parse_error_pattern_empty_repeat() {
-        let v = json!({"b": {"pattern": {"repeat": "", "size": "1kb"}}});
+        let v = json!({"b": {"pattern!": {"repeat": "", "size": "1kb"}}});
         assert!(parse_reply(&v).is_err());
     }
 
     #[test]
     fn parse_error_pattern_missing_size() {
-        let v = json!({"b": {"pattern": {"repeat": "abc"}}});
+        let v = json!({"b": {"pattern!": {"repeat": "abc"}}});
         assert!(parse_reply(&v).is_err());
     }
 

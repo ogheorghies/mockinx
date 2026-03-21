@@ -29,11 +29,22 @@ impl TestServer {
         format!("{}{}", self.base_url, path)
     }
 
-    /// Register a stub via POST /_mx.
+    /// Register a rule via POST /_mx (YAML body).
     async fn register(&self, yaml: &str) -> reqwest::Response {
         reqwest::Client::new()
             .post(&self.url("/_mx"))
             .body(yaml.to_string())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// Register a rule via POST /_mx (JSON body — needed for ! keys).
+    async fn register_json(&self, json: &serde_json::Value) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(&self.url("/_mx"))
+            .header("content-type", "application/json")
+            .body(json.to_string())
             .send()
             .await
             .unwrap()
@@ -45,7 +56,7 @@ impl TestServer {
 // =========================================================================
 
 #[tokio::test]
-async fn basic_stub_match_and_reply() {
+async fn basic_rule_match_and_reply() {
     let srv = TestServer::start().await;
     let resp = srv.register("{match: {g: /hello}, reply: {s: 200, b: world}}").await;
     assert_eq!(resp.status(), 201);
@@ -74,7 +85,7 @@ async fn no_match_returns_404() {
 }
 
 #[tokio::test]
-async fn later_stub_has_priority() {
+async fn later_rule_has_priority() {
     let srv = TestServer::start().await;
     srv.register("{match: {_: /path}, reply: {s: 200, b: first}}").await;
     srv.register("{match: {_: /path}, reply: {s: 201, b: second}}").await;
@@ -95,7 +106,7 @@ async fn catch_all_match() {
 }
 
 #[tokio::test]
-async fn batch_stub_registration() {
+async fn batch_rule_registration() {
     let srv = TestServer::start().await;
     let resp = srv.register(r#"[
         {match: {_: /a}, reply: {s: 200, b: a}},
@@ -110,13 +121,16 @@ async fn batch_stub_registration() {
 }
 
 // =========================================================================
-// Body generators
+// Body generators (use JSON for ! keys)
 // =========================================================================
 
 #[tokio::test]
 async fn rand_body_correct_size_and_deterministic() {
     let srv = TestServer::start().await;
-    srv.register("{match: {g: /rand}, reply: {s: 200, b: {rand: {size: 1kb, seed: 42}}}}").await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/rand"},
+        "reply": {"s": 200, "b": {"rand!": {"size": "1kb", "seed": 42}}}
+    })).await;
 
     let body1 = reqwest::get(&srv.url("/rand")).await.unwrap().bytes().await.unwrap();
     let body2 = reqwest::get(&srv.url("/rand")).await.unwrap().bytes().await.unwrap();
@@ -127,29 +141,45 @@ async fn rand_body_correct_size_and_deterministic() {
 #[tokio::test]
 async fn pattern_body() {
     let srv = TestServer::start().await;
-    srv.register("{match: {g: /pat}, reply: {s: 200, b: {pattern: {repeat: abc, size: 7b}}}}").await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/pat"},
+        "reply": {"s": 200, "b": {"pattern!": {"repeat": "abc", "size": "7b"}}}
+    })).await;
 
     let body = reqwest::get(&srv.url("/pat")).await.unwrap().text().await.unwrap();
     assert_eq!(body, "abcabca");
 }
 
+#[tokio::test]
+async fn rand_without_bang_is_literal() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/literal"},
+        "reply": {"s": 200, "b": {"rand": {"size": "1kb", "seed": 42}}}
+    })).await;
+
+    let resp = reqwest::get(&srv.url("/literal")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    // Should be returned as-is, not generated
+    assert_eq!(body["rand"]["size"], "1kb");
+}
+
 // =========================================================================
-// Delivery
+// Serve (delivery shaping) — using serve: key
 // =========================================================================
 
 #[tokio::test]
-async fn first_byte_delay() {
+async fn first_byte_delay_via_serve() {
     let srv = TestServer::start().await;
-    srv.register(r#"{
-        match: {g: /slow},
-        reply: {s: 200, b: ok},
-        delivery: {first_byte: {delay: 300ms}}
-    }"#).await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/slow"},
+        "reply": {"s": 200, "b": "ok"},
+        "serve": {"first_byte": "300ms"}
+    })).await;
 
     let start = std::time::Instant::now();
     let resp = reqwest::get(&srv.url("/slow")).await.unwrap();
     assert_eq!(resp.status(), 200);
-    // Body data is delayed — the delay happens during body read, not header receipt
     let _body = resp.text().await.unwrap();
     let elapsed = start.elapsed();
     assert!(
@@ -159,55 +189,49 @@ async fn first_byte_delay() {
 }
 
 #[tokio::test]
-async fn drop_after_bytes() {
+async fn drop_after_bytes_via_serve() {
     let srv = TestServer::start().await;
-    srv.register(r#"{
-        match: {g: /drop},
-        reply: {s: 200, b: {rand: {size: 10kb, seed: 1}}},
-        delivery: {drop: {after: 1kb}}
-    }"#).await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/drop"},
+        "reply": {"s": 200, "b": {"rand!": {"size": "10kb", "seed": 1}}},
+        "serve": {"drop": "1kb"}
+    })).await;
 
     let resp = reqwest::get(&srv.url("/drop")).await.unwrap();
     let body = resp.bytes().await.unwrap();
-    // Should get approximately 1KB, not 10KB
     assert!(body.len() <= 2048, "got too many bytes: {}", body.len());
     assert!(body.len() >= 512, "got too few bytes: {}", body.len());
 }
 
 // =========================================================================
-// Behavior
+// Behavior via serve:
 // =========================================================================
 
 #[tokio::test]
-async fn concurrency_reject() {
+async fn concurrency_reject_via_serve() {
     let srv = TestServer::start().await;
-    // Use duration to keep the response streaming (holds the handler active)
-    srv.register(r#"{
-        match: {_: /limited},
-        reply: {s: 200, b: {rand: {size: 10kb, seed: 1}}},
-        delivery: {duration: 1s},
-        behavior: {concurrency: {max: 1, over: {s: 429, b: "too many"}}}
-    }"#).await;
+    srv.register_json(&serde_json::json!({
+        "match": {"_": "/limited"},
+        "reply": {"s": 200, "b": {"rand!": {"size": "10kb", "seed": 1}}},
+        "serve": {"span": "1s", "conn": {"max": 1, "over": {"s": 429, "b": "too many"}}}
+    })).await;
 
     let client = reqwest::Client::new();
     let url = srv.url("/limited");
 
-    // Start first request (will stream for ~1s)
     let first = tokio::spawn({
         let client = client.clone();
         let url = url.clone();
         async move {
             let resp = client.get(&url).send().await.unwrap();
             let status = resp.status().as_u16();
-            let _ = resp.bytes().await; // consume the streaming body
+            let _ = resp.bytes().await;
             status
         }
     });
 
-    // Give it time to start
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // Second request should be rejected
     let second = client.get(&url).send().await.unwrap();
     assert_eq!(second.status(), 429);
 
@@ -218,6 +242,7 @@ async fn concurrency_reject() {
 #[tokio::test]
 async fn fail_injection() {
     let srv = TestServer::start().await;
+    // fail still works via legacy behavior: path
     srv.register(r#"{
         match: {_: /flaky},
         reply: {s: 200, b: ok},
@@ -258,7 +283,6 @@ async fn sequence_per_stub() {
     let resp2 = reqwest::get(&srv.url("/seq")).await.unwrap();
     assert_eq!(resp2.status(), 200);
 
-    // Wraps around
     let resp3 = reqwest::get(&srv.url("/seq")).await.unwrap();
     assert_eq!(resp3.status(), 401);
 }
@@ -281,23 +305,19 @@ async fn crud_operations() {
 
     let client = reqwest::Client::new();
 
-    // List
     let resp = client.get(&srv.url("/toys")).send().await.unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body.as_array().unwrap().len(), 2);
 
-    // Get by ID
     let resp = client.get(&srv.url("/toys/1")).send().await.unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["name"], "Ball");
 
-    // Get non-existent
     let resp = client.get(&srv.url("/toys/99")).send().await.unwrap();
     assert_eq!(resp.status(), 404);
 
-    // Create
     let resp = client
         .post(&srv.url("/toys"))
         .json(&serde_json::json!({"name": "Car", "price": 1.50}))
@@ -307,9 +327,8 @@ async fn crud_operations() {
     assert_eq!(resp.status(), 201);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["name"], "Car");
-    assert_eq!(body["id"], 4); // next after max seed id 3
+    assert_eq!(body["id"], 4);
 
-    // Patch
     let resp = client
         .patch(&srv.url("/toys/1"))
         .json(&serde_json::json!({"price": 3.99}))
@@ -321,11 +340,9 @@ async fn crud_operations() {
     assert_eq!(body["name"], "Ball");
     assert_eq!(body["price"], 3.99);
 
-    // Delete
     let resp = client.delete(&srv.url("/toys/1")).send().await.unwrap();
     assert_eq!(resp.status(), 204);
 
-    // Verify deleted
     let resp = client.get(&srv.url("/toys/1")).send().await.unwrap();
     assert_eq!(resp.status(), 404);
 }
@@ -336,17 +353,15 @@ async fn crud_operations() {
 
 #[tokio::test]
 async fn config_file_loading() {
-    // Create temp config file
     let dir = std::env::temp_dir().join("mockinx-test");
     std::fs::create_dir_all(&dir).unwrap();
-    let config_path = dir.join("test-stubs.yaml");
+    let config_path = dir.join("test-rules.yaml");
     std::fs::write(
         &config_path,
         "[{match: {g: /from-config}, reply: {s: 200, b: loaded}}]",
     )
     .unwrap();
 
-    // Load config into state
     let state = AppState::new();
     let content = std::fs::read_to_string(&config_path).unwrap();
     let val = yttp::parse(&content).unwrap();
@@ -366,7 +381,6 @@ async fn config_file_loading() {
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "loaded");
 
-    // Cleanup
     let _ = std::fs::remove_file(&config_path);
 }
 
@@ -375,14 +389,14 @@ async fn config_file_loading() {
 // =========================================================================
 
 #[tokio::test]
-async fn malformed_stub_returns_400() {
+async fn malformed_rule_returns_400() {
     let srv = TestServer::start().await;
     let resp = srv.register("not valid yaml {{{").await;
     assert_eq!(resp.status(), 400);
 }
 
 #[tokio::test]
-async fn stub_missing_match_returns_400() {
+async fn rule_missing_match_returns_400() {
     let srv = TestServer::start().await;
     let resp = srv.register("{reply: {s: 200}}").await;
     assert_eq!(resp.status(), 400);

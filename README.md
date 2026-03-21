@@ -1,7 +1,7 @@
 # mockinx - compliant web server, broken on purpose
 
-Establish reply rules, and get back exactly that: all good, CRUD, slowness, 
-drops, throttling, trickling, chaos.
+\[MO-keen-x\]: set reply rules, and get back exactly that. 
+all good, CRUD, slowness, drops, throttling, trickling, chaos.
 
 ```bash
 cargo install mockinx yurl    # yurl instead of curl
