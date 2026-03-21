@@ -77,7 +77,10 @@ impl AppState {
             }
             runtimes[idx] = runtime;
 
-            if let Some(ref crud_spec) = stub.behavior.crud {
+            // Check for CRUD in ReplyStrategy or legacy behavior.crud
+            if let Some(crate::reply::ReplyStrategy::Crud { ref spec, .. }) = stub.reply {
+                crud_stores.insert(idx, Arc::new(CrudStore::new(spec)));
+            } else if let Some(ref crud_spec) = stub.behavior.crud {
                 crud_stores.insert(idx, Arc::new(CrudStore::new(crud_spec)));
             }
 
@@ -173,17 +176,32 @@ async fn resolve_and_deliver(
     rng: &mut StdRng,
     permit: Option<OwnedSemaphorePermit>,
 ) -> Response {
-    // Resolve reply: CRUD > sequence > static reply
-    let reply = if let Some(crud_store) = get_crud_store(state, stub_idx) {
-        resolve_crud_reply(entry, &crud_store, method, path, body_bytes)
-    } else if let Some(ref seq) = entry.stub.behavior.sequence {
-        let call_idx = entry.next_call() as usize;
-        let reply_idx = call_idx % seq.replies.len();
-        seq.replies[reply_idx].clone()
-    } else if let Some(ref reply) = entry.stub.reply {
-        reply.clone()
-    } else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    // Resolve reply from ReplyStrategy
+    let reply = match &entry.stub.reply {
+        Some(crate::reply::ReplyStrategy::Static(r)) => r.clone(),
+        Some(crate::reply::ReplyStrategy::Sequence(replies)) => {
+            let call_idx = entry.next_call() as usize;
+            replies[call_idx % replies.len()].clone()
+        }
+        Some(crate::reply::ReplyStrategy::Crud { spec: _, headers }) => {
+            if let Some(crud_store) = get_crud_store(state, stub_idx) {
+                resolve_crud_reply(headers, &crud_store, method, path, body_bytes)
+            } else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
+        None => {
+            // Legacy: check behavior.sequence and behavior.crud
+            if let Some(ref seq) = entry.stub.behavior.sequence {
+                let call_idx = entry.next_call() as usize;
+                seq.replies[call_idx % seq.replies.len()].clone()
+            } else if let Some(crud_store) = get_crud_store(state, stub_idx) {
+                let headers = serde_json::Map::new();
+                resolve_crud_reply(&headers, &crud_store, method, path, body_bytes)
+            } else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
     };
 
     // Apply timeout if configured
@@ -204,18 +222,22 @@ async fn resolve_and_deliver(
 }
 
 fn resolve_crud_reply(
-    entry: &StubEntry,
+    default_headers: &serde_json::Map<String, Value>,
     crud_store: &CrudStore,
     method: &str,
     path: &str,
     body_bytes: &Bytes,
 ) -> ReplySpec {
-    let base_path = match &entry.stub.match_rule {
-        crate::match_rule::MatchRule::MethodPath { path, .. } => path.as_str(),
-        crate::match_rule::MatchRule::CatchAll => "/",
+    // Extract ID from path — for CRUD, we need the base path from the match rule.
+    // The crud_store handles the actual routing, so we extract from the request path.
+    // Find the last path segment as the potential ID.
+    let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let (id, _is_collection) = if segments.len() >= 2 {
+        (Some(segments.last().unwrap().to_string()), false)
+    } else {
+        (None, true)
     };
 
-    let id = extract_id(base_path, path);
     let request_body: Value = if body_bytes.is_empty() {
         Value::Null
     } else {
@@ -232,12 +254,7 @@ fn resolve_crud_reply(
         _ => (405, serde_json::json!({"error": "method not allowed"})),
     };
 
-    let headers = entry
-        .stub
-        .reply
-        .as_ref()
-        .map(|r| r.headers.clone())
-        .unwrap_or_default();
+    let headers = default_headers.clone();
 
     ReplySpec {
         status,

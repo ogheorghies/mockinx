@@ -97,7 +97,7 @@ mod tests {
     use crate::behavior::BehaviorSpec;
     use crate::delivery::DeliverySpec;
     use crate::match_rule::MatchRule;
-    use crate::reply::{BodySpec, ReplySpec};
+    use crate::reply::{ReplySpec, ReplyStrategy};
     use serde_json::json;
 
     fn stub_with_path(method: Option<&str>, path: &str, status: u16) -> Stub {
@@ -106,10 +106,10 @@ mod tests {
                 method: method.map(|m| m.to_string()),
                 path: path.to_string(),
             },
-            reply: Some(ReplySpec {
+            reply: Some(ReplyStrategy::Static(ReplySpec {
                 status,
                 ..Default::default()
-            }),
+            })),
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
         }
@@ -118,12 +118,19 @@ mod tests {
     fn catch_all_stub(status: u16) -> Stub {
         Stub {
             match_rule: MatchRule::CatchAll,
-            reply: Some(ReplySpec {
+            reply: Some(ReplyStrategy::Static(ReplySpec {
                 status,
                 ..Default::default()
-            }),
+            })),
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
+        }
+    }
+
+    fn get_status(entry: &Arc<StubEntry>) -> u16 {
+        match entry.stub.reply.as_ref().unwrap() {
+            ReplyStrategy::Static(r) => r.status,
+            _ => panic!("expected Static"),
         }
     }
 
@@ -132,7 +139,7 @@ mod tests {
         let store = StubStore::new();
         store.add(stub_with_path(Some("GET"), "/api/data", 200), 0);
         let entry = store.match_request("GET", "/api/data").unwrap();
-        assert_eq!(entry.stub.reply.as_ref().unwrap().status, 200);
+        assert_eq!(get_status(&entry), 200);
     }
 
     #[test]
@@ -148,7 +155,7 @@ mod tests {
         store.add(stub_with_path(None, "/path", 200), 0);
         store.add(stub_with_path(None, "/path", 201), 1);
         let entry = store.match_request("GET", "/path").unwrap();
-        assert_eq!(entry.stub.reply.as_ref().unwrap().status, 201);
+        assert_eq!(get_status(&entry), 201);
     }
 
     #[test]
@@ -160,9 +167,9 @@ mod tests {
             stub_with_path(None, "/a", 202), // should win for /a
         ], 0);
         let entry = store.match_request("GET", "/a").unwrap();
-        assert_eq!(entry.stub.reply.as_ref().unwrap().status, 202);
+        assert_eq!(get_status(&entry), 202);
         let entry = store.match_request("GET", "/b").unwrap();
-        assert_eq!(entry.stub.reply.as_ref().unwrap().status, 201);
+        assert_eq!(get_status(&entry), 201);
     }
 
     #[test]
@@ -182,10 +189,10 @@ mod tests {
         store.add(stub_with_path(Some("GET"), "/specific", 200), 1);
         // Specific wins for /specific
         let entry = store.match_request("GET", "/specific").unwrap();
-        assert_eq!(entry.stub.reply.as_ref().unwrap().status, 200);
+        assert_eq!(get_status(&entry), 200);
         // Catch-all wins for anything else
         let entry = store.match_request("GET", "/other").unwrap();
-        assert_eq!(entry.stub.reply.as_ref().unwrap().status, 404);
+        assert_eq!(get_status(&entry), 404);
     }
 
     #[test]

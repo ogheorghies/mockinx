@@ -284,16 +284,8 @@ fn parse_sequence(obj: &Map<String, Value>) -> Result<Option<SequenceSpec>, Pars
     Ok(Some(SequenceSpec { per, replies }))
 }
 
-fn parse_crud(obj: &Map<String, Value>) -> Result<Option<CrudSpec>, ParseError> {
-    let val = match obj.get("crud") {
-        None => return Ok(None),
-        Some(v) => v,
-    };
-
-    let crud_obj = val
-        .as_object()
-        .ok_or_else(|| ParseError("crud must be an object".into()))?;
-
+/// Parse a `CrudSpec` from an object (the value inside `crud!:` or `crud:`).
+pub fn parse_crud_spec(crud_obj: &Map<String, Value>) -> Result<CrudSpec, ParseError> {
     let id = match crud_obj.get("id") {
         None => CrudIdSpec::default(),
         Some(id_val) => {
@@ -323,7 +315,18 @@ fn parse_crud(obj: &Map<String, Value>) -> Result<Option<CrudSpec>, ParseError> 
         Some(v) => return Err(ParseError(format!("crud.seed must be an array, got {v}"))),
     };
 
-    Ok(Some(CrudSpec { id, seed }))
+    Ok(CrudSpec { id, seed })
+}
+
+fn parse_crud(obj: &Map<String, Value>) -> Result<Option<CrudSpec>, ParseError> {
+    let val = match obj.get("crud") {
+        None => return Ok(None),
+        Some(v) => v,
+    };
+    let crud_obj = val
+        .as_object()
+        .ok_or_else(|| ParseError("crud must be an object".into()))?;
+    Ok(Some(parse_crud_spec(crud_obj)?))
 }
 
 #[cfg(test)]

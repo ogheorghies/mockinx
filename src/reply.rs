@@ -1,3 +1,4 @@
+use crate::behavior::CrudSpec;
 use crate::units::{ByteSize, ParseError, parse_byte_size};
 use serde_json::{Map, Value};
 
@@ -33,6 +34,60 @@ impl Default for ReplySpec {
             headers: Map::new(),
             body: BodySpec::None,
         }
+    }
+}
+
+/// How to produce replies — static, sequence, or CRUD.
+#[derive(Debug, Clone)]
+pub enum ReplyStrategy {
+    /// Single static reply.
+    Static(ReplySpec),
+    /// Sequence of replies, cycled in order (per-rule counter for now).
+    Sequence(Vec<ReplySpec>),
+    /// In-memory CRUD resource.
+    Crud {
+        spec: CrudSpec,
+        /// Default headers from the reply context (e.g., Content-Type).
+        headers: Map<String, Value>,
+    },
+}
+
+/// Parse a `ReplyStrategy` from a `serde_json::Value`.
+///
+/// Polymorphic:
+/// - Array → Sequence
+/// - Object with `crud!` → Crud
+/// - Object with s/h/b → Static
+pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
+    match v {
+        Value::Array(arr) => {
+            if arr.is_empty() {
+                return Err(ParseError("reply sequence cannot be empty".into()));
+            }
+            let mut replies = Vec::with_capacity(arr.len());
+            for item in arr {
+                replies.push(parse_reply(item)?);
+            }
+            Ok(ReplyStrategy::Sequence(replies))
+        }
+        Value::Object(obj) => {
+            if let Some(crud_val) = obj.get("crud!") {
+                let crud_obj = crud_val
+                    .as_object()
+                    .ok_or_else(|| ParseError("crud! must be an object".into()))?;
+                let spec = crate::behavior::parse_crud_spec(crud_obj)?;
+                // Extract headers from h: field if present
+                let mut headers = obj
+                    .get("h")
+                    .and_then(|v| v.as_object().cloned())
+                    .unwrap_or_default();
+                yttp::expand_headers(&mut headers);
+                Ok(ReplyStrategy::Crud { spec, headers })
+            } else {
+                Ok(ReplyStrategy::Static(parse_reply(v)?))
+            }
+        }
+        _ => Err(ParseError(format!("reply must be an object or array, got {v}"))),
     }
 }
 

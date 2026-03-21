@@ -1,7 +1,7 @@
 use crate::behavior::{BehaviorSpec, parse_behavior};
 use crate::delivery::{DeliverySpec, parse_delivery_fields};
 use crate::match_rule::{MatchRule, parse_match_rule};
-use crate::reply::{ReplySpec, parse_reply};
+use crate::reply::{ReplySpec, ReplyStrategy, parse_reply, parse_reply_strategy};
 use crate::units::ParseError;
 use serde_json::Value;
 
@@ -10,8 +10,8 @@ use serde_json::Value;
 pub struct Stub {
     /// Which requests this rule matches.
     pub match_rule: MatchRule,
-    /// Response to send (optional if behavior provides replies).
-    pub reply: Option<ReplySpec>,
+    /// How to produce replies (static, sequence, or CRUD).
+    pub reply: Option<ReplyStrategy>,
     /// How to shape the response on the wire (delivery subset of serve).
     pub delivery: DeliverySpec,
     /// Endpoint-level policies (behavior subset of serve).
@@ -34,7 +34,7 @@ pub fn parse_stub(v: &Value) -> Result<Stub, ParseError> {
 
     let reply = match obj.get("reply") {
         None => None,
-        Some(r) => Some(parse_reply(r)?),
+        Some(r) => Some(parse_reply_strategy(r)?),
     };
 
     // Parse serve: (merged) or legacy delivery: + behavior:
@@ -58,12 +58,13 @@ pub fn parse_stub(v: &Value) -> Result<Stub, ParseError> {
 
     // Validate: must have some way to produce a response
     let has_reply = reply.is_some();
-    let has_sequence = behavior.sequence.is_some();
-    let has_crud = behavior.crud.is_some();
+    // Legacy: behavior.sequence and behavior.crud still work
+    let has_legacy_sequence = behavior.sequence.is_some();
+    let has_legacy_crud = behavior.crud.is_some();
 
-    if !has_reply && !has_sequence && !has_crud {
+    if !has_reply && !has_legacy_sequence && !has_legacy_crud {
         return Err(ParseError(
-            "rule must have 'reply', sequence, or crud".into(),
+            "rule must have 'reply' (static, sequence, or crud!)".into(),
         ));
     }
 
@@ -116,6 +117,13 @@ mod tests {
     use super::*;
     use crate::behavior::SequenceScope;
     use crate::delivery::DropSpec;
+
+    fn unwrap_static(strategy: &ReplyStrategy) -> &ReplySpec {
+        match strategy {
+            ReplyStrategy::Static(r) => r,
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
     use crate::match_rule::MatchRule;
     use crate::reply::BodySpec;
     use crate::units::{ByteSize, Range};
@@ -135,7 +143,7 @@ mod tests {
                 path: "/path".into()
             }
         );
-        assert_eq!(stub.reply.unwrap().status, 200);
+        assert_eq!(unwrap_static(stub.reply.as_ref().unwrap()).status, 200);
         assert_eq!(stub.delivery, DeliverySpec::default());
         assert_eq!(stub.behavior, BehaviorSpec::default());
     }
@@ -162,7 +170,8 @@ mod tests {
             "serve": {"speed": "10kb/s", "drop": "2kb"}
         }))
         .unwrap();
-        match &stub.reply.unwrap().body {
+        let r = unwrap_static(stub.reply.as_ref().unwrap());
+        match &r.body {
             BodySpec::Rand { size, seed } => {
                 assert_eq!(size.bytes(), 10 * 1024 * 1024);
                 assert_eq!(*seed, 42);
@@ -283,11 +292,9 @@ reply: {s: 200, h: {ct!: j!}, b: {name: Owl, price: 5.99}}
 "#;
         let val = yttp::parse(yaml).unwrap();
         let stub = parse_stub(&val).unwrap();
-        assert_eq!(stub.reply.as_ref().unwrap().status, 200);
-        assert_eq!(
-            stub.reply.as_ref().unwrap().headers["Content-Type"],
-            "application/json"
-        );
+        let r = unwrap_static(stub.reply.as_ref().unwrap());
+        assert_eq!(r.status, 200);
+        assert_eq!(r.headers["Content-Type"], "application/json");
     }
 
     #[test]

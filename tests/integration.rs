@@ -294,14 +294,13 @@ async fn sequence_per_stub() {
 #[tokio::test]
 async fn crud_operations() {
     let srv = TestServer::start().await;
-    srv.register(r#"{
-        match: {_: /toys},
-        reply: {h: {ct!: j!}},
-        behavior: {crud: {seed: [
-            {id: 1, name: Ball, price: 2.99},
-            {id: 3, name: Owl, price: 5.99}
-        ]}}
-    }"#).await;
+    srv.register_json(&serde_json::json!({
+        "match": {"_": "/toys"},
+        "reply": {"crud!": {"seed": [
+            {"id": 1, "name": "Ball", "price": 2.99},
+            {"id": 3, "name": "Owl", "price": 5.99}
+        ]}, "h": {"ct!": "j!"}}
+    })).await;
 
     let client = reqwest::Client::new();
 
