@@ -1,6 +1,5 @@
 use crate::behavior::{BehaviorSpec, OverflowAction};
 use crate::reply::ReplySpec;
-use crate::units::Scalable;
 use rand::Rng;
 use std::sync::Mutex;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};

@@ -1,5 +1,4 @@
 use crate::delivery::{DeliverySpec, DropSpec};
-use crate::units::{Range, Scalable};
 use bytes::Bytes;
 use rand::Rng;
 use std::pin::Pin;

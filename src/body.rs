@@ -1,5 +1,4 @@
 use crate::reply::BodySpec;
-use crate::units::ByteSize;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::StdRng;

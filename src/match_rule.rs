@@ -31,7 +31,10 @@ impl MatchRule {
                 }
                 let normalized_path = normalize_path(path);
                 let normalized_rule = normalize_path(rule_path);
+                // Exact match, or prefix match (for CRUD paths like /toys/1 matching /toys)
                 normalized_path == normalized_rule
+                    || (normalized_path.starts_with(normalized_rule)
+                        && normalized_path.as_bytes().get(normalized_rule.len()) == Some(&b'/'))
             }
         }
     }

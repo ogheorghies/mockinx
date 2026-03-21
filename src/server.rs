@@ -15,8 +15,13 @@ use bytes::Bytes;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use serde_json::Value;
+use tokio::sync::OwnedSemaphorePermit;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+
+/// Holds a semaphore permit so it lives as long as the response.
+#[derive(Clone)]
+struct PermitHolder(Arc<OwnedSemaphorePermit>);
 
 /// Shared application state.
 #[derive(Clone)]
@@ -130,19 +135,23 @@ async fn handle_request(
 
     // Check behavior policies
     let mut rng = StdRng::from_entropy();
-    if let Some(runtime) = get_runtime(&state, stub_idx) {
+    let permit = if let Some(runtime) = get_runtime(&state, stub_idx) {
         match runtime.check(&entry.stub.behavior, &mut rng).await {
             BehaviorResult::Reject(reply) => return build_reply_response(&reply, &mut rng),
-            BehaviorResult::Proceed(permit) => {
-                // Hold permit through response delivery
-                let response = resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng).await;
-                drop(permit);
-                return response;
-            }
+            BehaviorResult::Proceed(permit) => permit,
         }
+    } else {
+        None
+    };
+
+    let mut response = resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng).await;
+
+    // Attach permit to response extensions so it lives as long as the response body
+    if let Some(permit) = permit {
+        response.extensions_mut().insert(PermitHolder(Arc::new(permit)));
     }
 
-    resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng).await
+    response
 }
 
 async fn resolve_and_deliver(
