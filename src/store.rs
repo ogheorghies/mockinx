@@ -5,14 +5,17 @@ use std::sync::{Arc, RwLock};
 /// A stub with runtime state.
 pub struct StubEntry {
     pub stub: Stub,
+    /// Global index for runtime/CRUD store lookup.
+    pub index: usize,
     /// Call counter for sequence behavior (per-stub scope).
     pub call_count: AtomicU64,
 }
 
 impl StubEntry {
-    pub fn new(stub: Stub) -> Self {
+    pub fn new(stub: Stub, index: usize) -> Self {
         StubEntry {
             stub,
+            index,
             call_count: AtomicU64::new(0),
         }
     }
@@ -38,18 +41,19 @@ impl StubStore {
         }
     }
 
-    /// Add a single stub. It takes highest priority.
-    pub fn add(&self, stub: Stub) {
-        let entry = Arc::new(StubEntry::new(stub));
+    /// Add a single stub with the given index. It takes highest priority.
+    pub fn add(&self, stub: Stub, index: usize) {
+        let entry = Arc::new(StubEntry::new(stub, index));
         self.entries.write().unwrap().push(entry);
     }
 
     /// Add multiple stubs, maintaining their relative order.
     /// The last stub in the batch gets highest priority.
-    pub fn add_batch(&self, stubs: Vec<Stub>) {
+    /// Indices are assigned starting from `start_index`.
+    pub fn add_batch(&self, stubs: Vec<Stub>, start_index: usize) {
         let mut entries = self.entries.write().unwrap();
-        for stub in stubs {
-            entries.push(Arc::new(StubEntry::new(stub)));
+        for (i, stub) in stubs.into_iter().enumerate() {
+            entries.push(Arc::new(StubEntry::new(stub, start_index + i)));
         }
     }
 
@@ -126,7 +130,7 @@ mod tests {
     #[test]
     fn add_and_match() {
         let store = StubStore::new();
-        store.add(stub_with_path(Some("GET"), "/api/data", 200));
+        store.add(stub_with_path(Some("GET"), "/api/data", 200), 0);
         let entry = store.match_request("GET", "/api/data").unwrap();
         assert_eq!(entry.stub.reply.as_ref().unwrap().status, 200);
     }
@@ -134,15 +138,15 @@ mod tests {
     #[test]
     fn no_match_returns_none() {
         let store = StubStore::new();
-        store.add(stub_with_path(Some("GET"), "/api/data", 200));
+        store.add(stub_with_path(Some("GET"), "/api/data", 200), 0);
         assert!(store.match_request("GET", "/other").is_none());
     }
 
     #[test]
     fn later_stubs_have_priority() {
         let store = StubStore::new();
-        store.add(stub_with_path(None, "/path", 200));
-        store.add(stub_with_path(None, "/path", 201));
+        store.add(stub_with_path(None, "/path", 200), 0);
+        store.add(stub_with_path(None, "/path", 201), 1);
         let entry = store.match_request("GET", "/path").unwrap();
         assert_eq!(entry.stub.reply.as_ref().unwrap().status, 201);
     }
@@ -154,7 +158,7 @@ mod tests {
             stub_with_path(None, "/a", 200),
             stub_with_path(None, "/b", 201),
             stub_with_path(None, "/a", 202), // should win for /a
-        ]);
+        ], 0);
         let entry = store.match_request("GET", "/a").unwrap();
         assert_eq!(entry.stub.reply.as_ref().unwrap().status, 202);
         let entry = store.match_request("GET", "/b").unwrap();
@@ -164,7 +168,7 @@ mod tests {
     #[test]
     fn clear_removes_all() {
         let store = StubStore::new();
-        store.add(stub_with_path(Some("GET"), "/path", 200));
+        store.add(stub_with_path(Some("GET"), "/path", 200), 0);
         assert_eq!(store.len(), 1);
         store.clear();
         assert!(store.is_empty());
@@ -174,8 +178,8 @@ mod tests {
     #[test]
     fn catch_all_lower_priority_than_specific() {
         let store = StubStore::new();
-        store.add(catch_all_stub(404));
-        store.add(stub_with_path(Some("GET"), "/specific", 200));
+        store.add(catch_all_stub(404), 0);
+        store.add(stub_with_path(Some("GET"), "/specific", 200), 1);
         // Specific wins for /specific
         let entry = store.match_request("GET", "/specific").unwrap();
         assert_eq!(entry.stub.reply.as_ref().unwrap().status, 200);
@@ -187,7 +191,7 @@ mod tests {
     #[test]
     fn sequence_counter_increments() {
         let store = StubStore::new();
-        store.add(stub_with_path(Some("GET"), "/path", 200));
+        store.add(stub_with_path(Some("GET"), "/path", 200), 0);
         let entry = store.match_request("GET", "/path").unwrap();
         assert_eq!(entry.next_call(), 0);
         assert_eq!(entry.next_call(), 1);
@@ -197,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn thread_safety_concurrent_access() {
         let store = StubStore::new();
-        store.add(stub_with_path(Some("GET"), "/path", 200));
+        store.add(stub_with_path(Some("GET"), "/path", 200), 0);
 
         let mut handles = Vec::new();
         for _ in 0..10 {
@@ -217,7 +221,7 @@ mod tests {
                     Some("GET"),
                     &format!("/path{i}"),
                     200,
-                ));
+                ), 10 + i);
             }
         }));
 
