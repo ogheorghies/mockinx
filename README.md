@@ -1,35 +1,32 @@
 # mockinx - compliant web server, broken on purpose
 
-Configure endpoint behavior via API, and get back exactly that: all fine, CRUD,
-slow streams, mid-connection drops, throttled responses, and more.
-
-## Usage
+Establish reply rules, and get back exactly that: all good, CRUD, slowness, 
+drops, throttling, trickling, chaos.
 
 ```bash
-mockinx -p 9999 -c stubs.yaml     # Start server, read instructions from file
+cargo install mockinx yurl    # yurl instead of curl
+mockinx 9999                  # start server on port 9999
 ```
 
 ```bash
-# Configure an endpoint
 echo '{p: localhost:9999/_mx, b: {
   match: {g: /toys/3},
-  reply: {s: 200, h: {ct!: j!}, b: {name: Owl, price: 5.99}}
-}}' | yurl
+  reply: {s: 200, b: {name: Owl, price: 5.99}}
+}}' | yurl # (1) reply rule for /toys/3
 
-# Hit it
-echo '{g: localhost:9999/toys/3}' | yurl
-# => {"name": "Owl", "price": 5.99}
+echo '{g: localhost:9999/toys/3}' | yurl # (2) hit /toys/3
+# → {"name": "Owl", "price": 5.99}
 ```
 
-## Stub format
+## Reply rule
 
-A stub has up to four sections:
+A reply rule encompasses four aspects:
 
 ```yaml
-match: {}        # which requests to match
-reply: {}     # status, headers, body (yttp {s: h: b:} convention)
-delivery: {}     # how bytes hit the wire
-behavior: {}     # endpoint-level policies
+match: {}   # what to match     (method, URI)
+reply: {}   # what to respond   (status, payload)
+serve: {}   # how to serve it   (speed, chunks, ...)
+chaos: []   # what can go wrong (probability → override)
 ```
 
 ### match
@@ -43,89 +40,80 @@ match: _                     # match everything
 
 ### reply
 
-Uses the yttp `{s: h: b:}` convention for status, headers, body. Header shortcuts (from yttp) are expanded:
+Reply is polymorphic — object, array, or crud.
+
+`yttp` conventions are used: `s:` `h:` `b:`, shortcuts. 
+`mockinx` directives also use `!` suffix to distinguish from literal data.
 
 ```yaml
-# simple
-reply: {s: 200, h: {ct!: t!}, b: "hello"}
+# static reply (content-type inferred from body; explicit h: overrides)
+reply: {s: 200, h: {ct!: j!}, b: {"items": [1, 2, 3]}}
 
 # status only
 reply: {s: 204}
 
-# json
-reply: {s: 200, h: {ct!: j!}, b: {"items": [1, 2, 3]}}
-
-# generated body
-reply: {s: 200, b: {rand: {size: 10kb, seed: 7}}}
-reply: {s: 200, b: {pattern: {repeat: "abc", size: 1mb}}}
+# generated body (rand!, pattern! are mockinx directives)
+reply: {s: 200, b: {rand!: {size: 10kb, seed: 7}}}
+reply: {s: 200, b: {pattern!: {repeat: "abc", size: 1mb}}}
 
 # wrong content-type (malformed response)
 reply: {s: 200, h: {ct!: h!}, b: '{"valid": "json"}'}
+
+# sequence — array of replies, cycled per connection
+reply:
+  - {s: 401, b: "unauthorized"}
+  - {s: 200, b: "ok"}
+
+# crud — in-memory REST resource
+reply: {crud!: {seed: [{id: 1, name: Ball}, {id: 3, name: Owl}]}}
+reply: {crud!: {id: {name: sku, new: auto}}}
 ```
 
-### delivery
+### serve
 
-How the response is delivered on the wire:
+How the response is served — delivery shaping and operational constraints:
 
 ```yaml
-delivery:
-  duration: 5s            # spread body over this time
+serve:
+  # delivery shaping
+  span: 5s                # send body over this timespan
   speed: 10kb/s           # bandwidth cap
-  drop: {after: 2kb}      # kill connection after N bytes
-  drop: {after: 1s}       # kill connection after N time
-  first_byte: {delay: 2s} # delay before first byte
+  drop: 2kb               # kill connection after N bytes
+  drop: 1s                # kill connection after N time
+  first_byte: 2s          # delay before first byte
   chunk: {size: 1kb, delay: 100ms}  # chunked streaming
 
-# any scalar value supports jitter via ranges
-# explicit range:  min..max
-# percentage:      value..percent
-delivery:
-  duration: 4s..6s                  # uniform random between 4s and 6s
-  speed: 10kb/s..20%                # 8kb/s..12kb/s
-  drop: {after: 1kb..4kb}
-  first_byte: {delay: 1s..10%}     # 900ms..1.1s
-  chunk: {size: 512b..2kb, delay: 50ms..150ms}
-
-  # probabilistic — pick one delivery profile per request
-  pick:
-    - {p: 0.9}                        # normal
-    - {p: 0.05, drop: {after: 2kb}}   # connection drop
-    - {p: 0.05, speed: 100b/s}        # crawl
+  # operational constraints (connections, rate per second)
+  conn: {max: 5, over: {s: 429, b: "too many"}}
+  conn: {max: 5, over: block}
+  conn: {max: 5, over: {block: 3s, then: {s: 429, b: "timeout"}}}
+  rps: {max: 100, over: {s: 429}}
+  timeout: 30s
 ```
 
-### behavior
-
-Endpoint-level policies that decide whether/when a request gets served:
+Any scalar value supports jitter via ranges (`min..max` or `value..percent`):
 
 ```yaml
-behavior:
-  # concurrency — reject, block, or block with timeout
-  concurrency: {max: 5, over: {s: 429, b: "too many"}}
-  concurrency: {max: 5, over: block}
-  concurrency: {max: 5, over: {block: 3s, then: {s: 429, b: "timeout"}}}
+serve:
+  span: 4s..6s                  # uniform random between 4s and 6s
+  speed: 10kb/s..20%            # 8kb/s..12kb/s
+  drop: 1kb..4kb                # drop conn anywhere in that byte range
+  first_byte: 1s..10%           # 900ms..1.1s
+  chunk: {size: 512b..2kb, delay: 50ms..150ms}
+```
 
-  # rate limit
-  rate_limit: {rps: 100, over: {s: 429}}
+### chaos
 
-  # random failures — 10% of requests get error reply
-  fail: {rate: 0.1, reply: {s: 500, b: "internal error"}}
+Probabilistic overrides for reply and/or serve. Each entry has a weight (`p`)
+and optional `reply`/`serve` overrides. Unspecified fields inherit from the rule's defaults.
 
-  # max request lifetime
-  timeout: 30s
-
-  # sequences — different reply per call, counter resets per connection or per stub
-  sequence:
-    per: connection
-    replies:
-      - {s: 401, b: "unauthorized"}
-      - {s: 200, b: "ok"}
-
-  # crud — in-memory REST resource
-  crud:
-    id: {name: id, new: auto}     # default
-    seed:
-      - {id: 1, name: Ball, price: 2.99}
-      - {id: 3, name: Owl, price: 5.99}
+```yaml
+# p is a percentage — unmatched remainder uses rule defaults
+chaos:
+  - {p: 0.10, reply: {s: 500, b: "error"}}   # 0.1% error
+  - {p: 0.05, serve: {drop: 1kb}}            # 0.05% drop
+  - {p: 7.00, serve: {speed: 100b/s}}        # 7% crawl
+  # remaining 92.85% normal
 ```
 
 ## Full examples
@@ -134,36 +122,46 @@ behavior:
 # Slow API with concurrency limit
 echo '{p: localhost:9999/_mx, b: {
   match: {g: /api/data},
-  reply: {s: 200, h: {ct!: j!}, b: {"items": [1, 2, 3]}},
-  delivery: {first_byte: {delay: 2s}, duration: 5s},
-  behavior: {concurrency: {max: 5, over: {block: 3s, then: {s: 429}}}}
+  reply: {s: 200, b: {"items": [1, 2, 3]}},
+  serve: {first_byte: 2s, span: 5s, conn: {max: 5, over: {block: 3s, then: {s: 429}}}}
 }}' | yurl
 
 # Large download, throttled, drops mid-stream
 echo '{p: localhost:9999/_mx, b: {
   match: {_: /download},
-  reply: {s: 200, b: {rand: {size: 10mb, seed: 42}}},
-  delivery: {speed: 10kb/s, drop: {after: 2kb}}
+  reply: {s: 200, b: {rand!: {size: 10mb, seed: 42}}},
+  serve: {speed: 10kb/s, drop: 2kb}
 }}' | yurl
 
 # Flaky auth endpoint
 echo '{p: localhost:9999/_mx, b: {
   match: {_: /auth},
-  behavior: {sequence: [
+  reply: [
     {s: 401, b: "unauthorized"},
     {s: 200, b: "ok"}
-  ]}
+  ]
 }}' | yurl
 
 # CRUD resource with latency
 echo '{p: localhost:9999/_mx, b: {
   match: {_: /toys},
-  reply: {h: {ct!: j!}},
-  delivery: {first_byte: {delay: 200ms}},
-  behavior: {crud: {seed: [
+  reply: {crud!: {seed: [
     {id: 1, name: Ball, price: 2.99},
     {id: 3, name: Owl, price: 5.99}
-  ]}}
+  ]}},
+  serve: {first_byte: 200ms}
+}}' | yurl
+
+# Mostly fine, occasional errors and slow responses
+echo '{p: localhost:9999/_mx, b: {
+  match: {_: /api/items},
+  reply: {s: 200, b: {items: []}},
+  serve: {span: 500ms},
+  chaos: [
+    {p: 5, reply: {s: 500, b: "internal error"}},
+    {p: 3, serve: {speed: 100b/s}},
+    {p: 1, serve: {drop: 512b}}
+  ]
 }}' | yurl
 ```
 
@@ -183,19 +181,19 @@ echo '{g: localhost:9999/_mx/log, q: {method: POST}}' | yurl
 echo '{d: localhost:9999/_mx/log}' | yurl
 ```
 
-## Multiple stubs
+## Multiple rules
 
-`_mx` accepts a single object or an array:
+`_mx` accepts a single rule or an array:
 
 ```bash
 echo '{p: localhost:9999/_mx, b: [
   {match: {_: /a}, reply: {s: 200, b: "a"}},
   {match: {_: /b}, reply: {s: 404}},
-  {match: {_: /c}, reply: {s: 200, b: "c"}, delivery: {duration: 5s}}
+  {match: {_: /c}, reply: {s: 200, b: "c"}, serve: {span: 5s}}
 ]}' | yurl
 ```
 
-Stubs are priority-ordered. Later stubs take precedence.
+Rules are priority-ordered. Later rules take precedence.
 
 ## Tech
 
