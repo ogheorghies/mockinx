@@ -4,3 +4,4 @@ pub mod reply;
 pub mod delivery;
 pub mod behavior;
 pub mod stub;
+pub mod body;
