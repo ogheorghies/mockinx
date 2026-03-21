@@ -1,7 +1,7 @@
 use crate::behavior_engine::{BehaviorResult, BehaviorRuntime};
 use crate::body::generate_body;
 use crate::crud::{CrudStore, extract_id};
-use crate::delivery_engine::deliver;
+use crate::delivery_engine::{DeliveryStream, deliver};
 use crate::reply::{BodySpec, ReplySpec};
 use crate::store::{StubEntry, StubStore};
 use crate::stub::parse_stubs;
@@ -15,13 +15,29 @@ use bytes::Bytes;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use serde_json::Value;
-use tokio::sync::OwnedSemaphorePermit;
 use std::collections::HashMap;
+use std::io;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
+use std::task::{Context, Poll};
+use tokio::sync::OwnedSemaphorePermit;
+use tokio_stream::Stream;
 
-/// Holds a semaphore permit so it lives as long as the response.
-#[derive(Clone)]
-struct PermitHolder(Arc<OwnedSemaphorePermit>);
+/// A stream wrapper that holds a semaphore permit for the duration of streaming.
+/// The permit is released when this stream is dropped (body fully sent or client disconnects).
+struct PermitStream {
+    inner: DeliveryStream,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Stream for PermitStream {
+    type Item = Result<Bytes, io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Safety: DeliveryStream is Unpin (all fields are Unpin)
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
 
 /// Shared application state.
 #[derive(Clone)]
@@ -131,27 +147,20 @@ async fn handle_request(
     };
 
     // Find the stub's runtime index
-    let stub_idx = find_stub_index(&state, &entry);
+    let stub_idx = entry.index;
 
     // Check behavior policies
     let mut rng = StdRng::from_entropy();
     let permit = if let Some(runtime) = get_runtime(&state, stub_idx) {
         match runtime.check(&entry.stub.behavior, &mut rng).await {
-            BehaviorResult::Reject(reply) => return build_reply_response(&reply, &mut rng),
+            BehaviorResult::Reject(reply) => return build_reply_response(&reply),
             BehaviorResult::Proceed(permit) => permit,
         }
     } else {
         None
     };
 
-    let mut response = resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng).await;
-
-    // Attach permit to response extensions so it lives as long as the response body
-    if let Some(permit) = permit {
-        response.extensions_mut().insert(PermitHolder(Arc::new(permit)));
-    }
-
-    response
+    resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng, permit).await
 }
 
 async fn resolve_and_deliver(
@@ -162,6 +171,7 @@ async fn resolve_and_deliver(
     body_bytes: &Bytes,
     stub_idx: usize,
     rng: &mut StdRng,
+    permit: Option<OwnedSemaphorePermit>,
 ) -> Response {
     // Resolve reply: CRUD > sequence > static reply
     let reply = if let Some(crud_store) = get_crud_store(state, stub_idx) {
@@ -181,18 +191,15 @@ async fn resolve_and_deliver(
         let timeout_dur = timeout_range.sample(rng).as_std();
         match tokio::time::timeout(
             timeout_dur,
-            build_delivery_response(&reply, &entry.stub.delivery, rng),
+            build_delivery_response(&reply, &entry.stub.delivery, rng, permit),
         )
         .await
         {
             Ok(response) => response,
-            Err(_) => {
-                // Timeout: just drop the connection
-                StatusCode::GATEWAY_TIMEOUT.into_response()
-            }
+            Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
         }
     } else {
-        build_delivery_response(&reply, &entry.stub.delivery, rng).await
+        build_delivery_response(&reply, &entry.stub.delivery, rng, permit).await
     }
 }
 
@@ -225,7 +232,6 @@ fn resolve_crud_reply(
         _ => (405, serde_json::json!({"error": "method not allowed"})),
     };
 
-    // Merge CRUD response with stub's default reply headers
     let headers = entry
         .stub
         .reply
@@ -244,7 +250,8 @@ fn resolve_crud_reply(
     }
 }
 
-fn build_reply_response(reply: &ReplySpec, _rng: &mut StdRng) -> Response {
+/// Build a response with no delivery shaping (full body at once).
+fn build_reply_response(reply: &ReplySpec) -> Response {
     let body_bytes = generate_body(&reply.body);
     let mut response = Response::builder()
         .status(reply.status);
@@ -265,21 +272,35 @@ fn build_reply_response(reply: &ReplySpec, _rng: &mut StdRng) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// Build a response with delivery shaping, optionally holding a concurrency permit.
 async fn build_delivery_response(
     reply: &ReplySpec,
     delivery: &crate::delivery::DeliverySpec,
     rng: &mut StdRng,
+    permit: Option<OwnedSemaphorePermit>,
 ) -> Response {
     let body_bytes = generate_body(&reply.body);
 
-    // If default delivery (no shaping), return immediately
+    // If default delivery (no shaping), return immediately.
+    // Permit is dropped here — fine because the full body is buffered.
     if *delivery == crate::delivery::DeliverySpec::default() {
-        return build_reply_response(reply, rng);
+        return build_reply_response(reply);
     }
 
     // Use delivery engine for shaped streaming
     let stream = deliver(body_bytes, delivery, rng);
-    let body = Body::from_stream(stream);
+
+    // If we have a concurrency permit, wrap the stream so the permit
+    // lives as long as the stream (released when body is fully sent
+    // or client disconnects).
+    let body = if let Some(permit) = permit {
+        Body::from_stream(PermitStream {
+            inner: stream,
+            _permit: permit,
+        })
+    } else {
+        Body::from_stream(stream)
+    };
 
     let mut response = Response::builder()
         .status(reply.status);
@@ -298,10 +319,6 @@ async fn build_delivery_response(
     response
         .body(body)
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
-fn find_stub_index(_state: &AppState, entry: &Arc<StubEntry>) -> usize {
-    entry.index
 }
 
 fn get_runtime(state: &AppState, idx: usize) -> Option<Arc<BehaviorRuntime>> {

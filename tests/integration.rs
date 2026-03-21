@@ -179,7 +179,6 @@ async fn drop_after_bytes() {
 // =========================================================================
 
 #[tokio::test]
-#[ignore] // TODO: permit must be embedded in the stream body for proper lifetime
 async fn concurrency_reject() {
     let srv = TestServer::start().await;
     // Use duration to keep the response streaming (holds the handler active)
