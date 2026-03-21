@@ -1,14 +1,18 @@
 use crate::stub::Stub;
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// A stub with runtime state.
 pub struct StubEntry {
     pub stub: Stub,
     /// Global index for runtime/CRUD store lookup.
     pub index: usize,
-    /// Call counter for sequence behavior (per-stub scope).
+    /// Global call counter (used for per-rule sequences, legacy).
     pub call_count: AtomicU64,
+    /// Per-connection call counters (keyed by peer address).
+    conn_counters: Mutex<HashMap<SocketAddr, u64>>,
 }
 
 impl StubEntry {
@@ -17,12 +21,22 @@ impl StubEntry {
             stub,
             index,
             call_count: AtomicU64::new(0),
+            conn_counters: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Increment and return the call count (0-indexed: first call returns 0).
+    /// Increment and return the global call count (0-indexed).
     pub fn next_call(&self) -> u64 {
         self.call_count.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Increment and return the per-connection call count (0-indexed).
+    pub fn next_call_for(&self, addr: SocketAddr) -> u64 {
+        let mut counters = self.conn_counters.lock().unwrap();
+        let count = counters.entry(addr).or_insert(0);
+        let current = *count;
+        *count += 1;
+        current
     }
 }
 

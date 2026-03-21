@@ -132,10 +132,12 @@ async fn handle_stub_registration(
 /// Catch-all handler for matched requests.
 async fn handle_request(
     State(state): State<AppState>,
+    axum::extract::ConnectInfo(peer_addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     req: Request,
 ) -> Response {
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
+    let peer_addr = Some(peer_addr);
 
     // Read request body for CRUD operations
     let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
@@ -163,7 +165,7 @@ async fn handle_request(
         None
     };
 
-    resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng, permit).await
+    resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng, permit, peer_addr).await
 }
 
 async fn resolve_and_deliver(
@@ -175,12 +177,18 @@ async fn resolve_and_deliver(
     stub_idx: usize,
     rng: &mut StdRng,
     permit: Option<OwnedSemaphorePermit>,
+    peer_addr: Option<std::net::SocketAddr>,
 ) -> Response {
     // Resolve reply from ReplyStrategy
     let reply = match &entry.stub.reply {
         Some(crate::reply::ReplyStrategy::Static(r)) => r.clone(),
         Some(crate::reply::ReplyStrategy::Sequence(replies)) => {
-            let call_idx = entry.next_call() as usize;
+            // Per-connection cycling (falls back to global if no peer addr)
+            let call_idx = if let Some(addr) = peer_addr {
+                entry.next_call_for(addr) as usize
+            } else {
+                entry.next_call() as usize
+            };
             replies[call_idx % replies.len()].clone()
         }
         Some(crate::reply::ReplyStrategy::Crud { spec: _, headers }) => {
