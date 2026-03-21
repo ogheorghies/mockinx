@@ -12,5 +12,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 serde_yml = "0.0.12"
 rand = "0.8"
 bytes = "1"
+indexmap = { version = "2", features = ["serde"] }
 tokio-stream = "0.1"
 yttp = { path = "../yttp" }
