@@ -126,6 +126,7 @@ mod tests {
             })),
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
+            chaos: None,
         }
     }
 
@@ -138,6 +139,7 @@ mod tests {
             })),
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
+            chaos: None,
         }
     }
 

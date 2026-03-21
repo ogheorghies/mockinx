@@ -394,6 +394,38 @@ async fn config_file_loading() {
 }
 
 // =========================================================================
+// Chaos
+// =========================================================================
+
+#[tokio::test]
+async fn chaos_reply_override() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"_": "/chaos"},
+        "reply": {"s": 200, "b": "ok"},
+        "chaos": [
+            {"p": 50, "reply": {"s": 500, "b": "error"}}
+        ]
+    })).await;
+
+    let client = reqwest::Client::new();
+    let mut ok_count = 0u32;
+    let mut err_count = 0u32;
+
+    for _ in 0..100 {
+        let resp = client.get(&srv.url("/chaos")).send().await.unwrap();
+        if resp.status() == 200 {
+            ok_count += 1;
+        } else {
+            err_count += 1;
+        }
+    }
+
+    assert!(ok_count > 30, "too few successes: {ok_count}");
+    assert!(err_count > 30, "too few failures: {err_count}");
+}
+
+// =========================================================================
 // Content-type inference
 // =========================================================================
 

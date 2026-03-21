@@ -1,5 +1,6 @@
 use crate::behavior_engine::{BehaviorResult, BehaviorRuntime};
 use crate::body::generate_body;
+use crate::chaos::{ChaosResult, resolve_chaos};
 use crate::crud::{CrudStore, extract_id};
 use crate::delivery_engine::{DeliveryStream, deliver};
 use crate::reply::{BodySpec, ReplySpec};
@@ -179,6 +180,32 @@ async fn resolve_and_deliver(
     permit: Option<OwnedSemaphorePermit>,
     peer_addr: Option<std::net::SocketAddr>,
 ) -> Response {
+    // Check chaos first — may override reply and/or delivery
+    let (chaos_reply, chaos_delivery) = if let Some(ref chaos_entries) = entry.stub.chaos {
+        match resolve_chaos(chaos_entries, rng) {
+            ChaosResult::Normal => (None, None),
+            ChaosResult::Override { reply, serve } => (reply, serve),
+        }
+    } else {
+        (None, None)
+    };
+
+    // If chaos provided a reply, use it directly
+    if let Some(ref chaos_reply) = chaos_reply {
+        let delivery = chaos_delivery.as_ref().unwrap_or(&entry.stub.delivery);
+        if let Some(ref timeout_range) = entry.stub.behavior.timeout {
+            let timeout_dur = timeout_range.sample(rng).as_std();
+            return match tokio::time::timeout(
+                timeout_dur,
+                build_delivery_response(chaos_reply, delivery, rng, permit),
+            ).await {
+                Ok(response) => response,
+                Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+            };
+        }
+        return build_delivery_response(chaos_reply, delivery, rng, permit).await;
+    }
+
     // Resolve reply from ReplyStrategy
     let reply = match &entry.stub.reply {
         Some(crate::reply::ReplyStrategy::Static(r)) => r.clone(),
@@ -212,12 +239,15 @@ async fn resolve_and_deliver(
         }
     };
 
+    // Use chaos delivery override if present, otherwise rule default
+    let delivery = chaos_delivery.as_ref().unwrap_or(&entry.stub.delivery);
+
     // Apply timeout if configured
     if let Some(ref timeout_range) = entry.stub.behavior.timeout {
         let timeout_dur = timeout_range.sample(rng).as_std();
         match tokio::time::timeout(
             timeout_dur,
-            build_delivery_response(&reply, &entry.stub.delivery, rng, permit),
+            build_delivery_response(&reply, delivery, rng, permit),
         )
         .await
         {
@@ -225,7 +255,7 @@ async fn resolve_and_deliver(
             Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
         }
     } else {
-        build_delivery_response(&reply, &entry.stub.delivery, rng, permit).await
+        build_delivery_response(&reply, delivery, rng, permit).await
     }
 }
 

@@ -9,4 +9,5 @@ pub mod delivery_engine;
 pub mod store;
 pub mod behavior_engine;
 pub mod crud;
+pub mod chaos;
 pub mod server;

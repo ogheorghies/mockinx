@@ -1,11 +1,12 @@
 use crate::behavior::{BehaviorSpec, parse_behavior};
+use crate::chaos::{ChaosEntry, parse_chaos};
 use crate::delivery::{DeliverySpec, parse_delivery_fields};
 use crate::match_rule::{MatchRule, parse_match_rule};
 use crate::reply::{ReplySpec, ReplyStrategy, parse_reply, parse_reply_strategy};
 use crate::units::ParseError;
 use serde_json::Value;
 
-/// A complete rule definition: match + reply + serve (delivery + behavior).
+/// A complete rule definition: match + reply + serve + chaos.
 #[derive(Debug, Clone)]
 pub struct Stub {
     /// Which requests this rule matches.
@@ -16,6 +17,8 @@ pub struct Stub {
     pub delivery: DeliverySpec,
     /// Endpoint-level policies (behavior subset of serve).
     pub behavior: BehaviorSpec,
+    /// Probabilistic overrides.
+    pub chaos: Option<Vec<ChaosEntry>>,
 }
 
 /// Parse a single rule from a `serde_json::Value` object.
@@ -68,11 +71,17 @@ pub fn parse_stub(v: &Value) -> Result<Stub, ParseError> {
         ));
     }
 
+    let chaos = match obj.get("chaos") {
+        None => None,
+        Some(v) => Some(parse_chaos(v)?),
+    };
+
     Ok(Stub {
         match_rule,
         reply,
         delivery,
         behavior,
+        chaos,
     })
 }
 
