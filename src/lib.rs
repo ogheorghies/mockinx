@@ -7,3 +7,4 @@ pub mod stub;
 pub mod body;
 pub mod delivery_engine;
 pub mod store;
+pub mod behavior_engine;
