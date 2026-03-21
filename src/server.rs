@@ -275,11 +275,31 @@ fn resolve_crud_reply(
     }
 }
 
+/// Infer Content-Type from body if not explicitly set.
+fn infer_content_type(reply: &ReplySpec) -> Option<&'static str> {
+    // If headers already have Content-Type, don't infer
+    if reply.headers.keys().any(|k| k.eq_ignore_ascii_case("content-type")) {
+        return None;
+    }
+    match &reply.body {
+        BodySpec::Literal(Value::Object(_)) | BodySpec::Literal(Value::Array(_)) => {
+            Some("application/json")
+        }
+        BodySpec::Literal(Value::String(_)) => Some("text/plain"),
+        _ => None,
+    }
+}
+
 /// Build a response with no delivery shaping (full body at once).
 fn build_reply_response(reply: &ReplySpec) -> Response {
     let body_bytes = generate_body(&reply.body);
     let mut response = Response::builder()
         .status(reply.status);
+
+    // Infer content-type if not set
+    if let Some(ct) = infer_content_type(reply) {
+        response = response.header("content-type", ct);
+    }
 
     for (key, val) in &reply.headers {
         if let Some(v) = val.as_str() {
@@ -329,6 +349,10 @@ async fn build_delivery_response(
 
     let mut response = Response::builder()
         .status(reply.status);
+
+    if let Some(ct) = infer_content_type(reply) {
+        response = response.header("content-type", ct);
+    }
 
     for (key, val) in &reply.headers {
         if let Some(v) = val.as_str() {

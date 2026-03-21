@@ -394,6 +394,40 @@ async fn config_file_loading() {
 }
 
 // =========================================================================
+// Content-type inference
+// =========================================================================
+
+#[tokio::test]
+async fn json_body_infers_content_type() {
+    let srv = TestServer::start().await;
+    srv.register("{match: {g: /infer}, reply: {s: 200, b: {items: [1, 2]}}}").await;
+
+    let resp = reqwest::get(&srv.url("/infer")).await.unwrap();
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert_eq!(ct, "application/json");
+}
+
+#[tokio::test]
+async fn string_body_infers_text_plain() {
+    let srv = TestServer::start().await;
+    srv.register("{match: {g: /text}, reply: {s: 200, b: hello}}").await;
+
+    let resp = reqwest::get(&srv.url("/text")).await.unwrap();
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert_eq!(ct, "text/plain");
+}
+
+#[tokio::test]
+async fn explicit_content_type_overrides_inference() {
+    let srv = TestServer::start().await;
+    srv.register("{match: {g: /override}, reply: {s: 200, h: {ct!: h!}, b: {items: []}}}").await;
+
+    let resp = reqwest::get(&srv.url("/override")).await.unwrap();
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert_eq!(ct, "text/html");
+}
+
+// =========================================================================
 // Malformed input
 // =========================================================================
 
