@@ -15,7 +15,7 @@ impl std::error::Error for ParseError {}
 
 /// Trait for types that support linear interpolation and scaling.
 /// Required by Range for sampling and percentage-based ranges.
-pub trait Scalable: Copy {
+pub trait Scalable: Copy + Ord {
     fn lerp(self, other: Self, t: f64) -> Self;
     fn scale(self, factor: f64) -> Self;
 }
@@ -207,14 +207,25 @@ where
                 return Err(ParseError(format!("percentage cannot be negative: '{s}'")));
             }
             let fraction = pct / 100.0;
-            let lo = base.scale(1.0 - fraction);
-            let hi = base.scale(1.0 + fraction);
-            Ok(Range::MinMax(lo, hi))
+            if fraction == 0.0 {
+                Ok(Range::Fixed(base))
+            } else {
+                let lo = base.scale(1.0 - fraction);
+                let hi = base.scale(1.0 + fraction);
+                Ok(Range::MinMax(lo, hi))
+            }
         } else {
             // Explicit range: "4s..6s"
             let min = parse_fn(base_str)?;
             let max = parse_fn(rest)?;
-            Ok(Range::MinMax(min, max))
+            if max < min {
+                return Err(ParseError(format!("range min > max in '{s}'")));
+            }
+            if min == max {
+                Ok(Range::Fixed(min))
+            } else {
+                Ok(Range::MinMax(min, max))
+            }
         }
     } else {
         let val = parse_fn(s)?;
@@ -582,6 +593,25 @@ mod tests {
     #[test]
     fn range_invalid_left_side() {
         assert!(parse_duration_range("abc..4s").is_err());
+    }
+
+    #[test]
+    fn range_inverted_is_error() {
+        assert!(parse_duration_range("6s..4s").is_err());
+        assert!(parse_byte_size_range("4kb..1kb").is_err());
+        assert!(parse_speed_range("10kb/s..5kb/s").is_err());
+    }
+
+    #[test]
+    fn range_equal_min_max_collapses_to_fixed() {
+        let r = parse_duration_range("5s..5s").unwrap();
+        assert_eq!(r, Range::Fixed(Duration(std::time::Duration::from_secs(5))));
+    }
+
+    #[test]
+    fn range_zero_percent_collapses_to_fixed() {
+        let r = parse_duration_range("5s..0%").unwrap();
+        assert_eq!(r, Range::Fixed(Duration(std::time::Duration::from_secs(5))));
     }
 
     // --- Value parsing ---
