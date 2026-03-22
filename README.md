@@ -77,9 +77,9 @@ How the response is served — delivery shaping and operational constraints:
 ```yaml
 serve:
   # delivery shaping
-  span: 5s                              # pacing: duration target (auto-chunked)
-  span: {chunk: 1kb, delay: 100ms}      # pacing: explicit chunking
-  span: {speed: 10kb/s}                 # pacing: bandwidth cap
+  pace: 5s                              # pacing: duration target (auto-chunked)
+  pace: {chunk: 1kb, delay: 100ms}      # pacing: explicit chunking
+  pace: 10kb/s                 # pacing: bandwidth cap
   drop: 2kb                             # kill connection after N bytes
   drop: 1s                              # kill connection after N time
   first_byte: 2s                        # delay before first byte
@@ -96,9 +96,9 @@ Any scalar value supports jitter via ranges (`min..max` or `value..percent`):
 
 ```yaml
 serve:
-  span: 4s..6s                                  # random timespan
-  span: {chunk: 512b..2kb, delay: 50ms..150ms}  # random chunk size and delay
-  span: {speed: 10kb/s..20%}                    # random bandwidth 8kb/s..12kb/s
+  pace: 4s..6s                                  # random timespan
+  pace: {chunk: 512b..2kb, delay: 50ms..150ms}  # random chunk size and delay
+  pace: 10kb/s..20%                    # random bandwidth 8kb/s..12kb/s
   drop: 1kb..4kb                                # drop conn anywhere in that byte range
   first_byte: 1s..10%                            # 900ms..1.1s
 ```
@@ -113,7 +113,7 @@ and optional `reply`/`serve` overrides. Unspecified fields inherit from the rule
 chaos:
   - {p: 0.10, reply: {s: 500, b: "error"}}   # 0.1% error
   - {p: 0.05, serve: {drop: 1kb}}            # 0.05% drop
-  - {p: 7.00, serve: {span: {speed: 100b/s}}}        # 7% crawl
+  - {p: 7.00, serve: {pace: 100b/s}}        # 7% crawl
   # remaining 92.85% normal
 ```
 
@@ -124,14 +124,14 @@ chaos:
 echo '{p: localhost:9999/_mx, b: {
   match: {g: /api/data},
   reply: {s: 200, b: {"items": [1, 2, 3]}},
-  serve: {first_byte: 2s, span: 5s, conn: {max: 5, over: {block: 3s, then: {s: 429}}}}
+  serve: {first_byte: 2s, pace: 5s, conn: {max: 5, over: {block: 3s, then: {s: 429}}}}
 }}' | yurl
 
 # Large download, throttled, drops mid-stream
 echo '{p: localhost:9999/_mx, b: {
   match: {_: /download},
   reply: {s: 200, b: {rand!: {size: 10mb, seed: 42}}},
-  serve: {span: {speed: 10kb/s}, drop: 2kb}
+  serve: {pace: 10kb/s, drop: 2kb}
 }}' | yurl
 
 # Flaky auth endpoint
@@ -157,10 +157,10 @@ echo '{p: localhost:9999/_mx, b: {
 echo '{p: localhost:9999/_mx, b: {
   match: {_: /api/items},
   reply: {s: 200, b: {items: []}},
-  serve: {span: 500ms},
+  serve: {pace: 500ms},
   chaos: [
     {p: 5, reply: {s: 500, b: "internal error"}},
-    {p: 3, serve: {span: {speed: 100b/s}}},
+    {p: 3, serve: {pace: 100b/s}},
     {p: 1, serve: {drop: 512b}}
   ]
 }}' | yurl
@@ -190,7 +190,7 @@ echo '{d: localhost:9999/_mx/log}' | yurl
 echo '{p: localhost:9999/_mx, b: [
   {match: {_: /a}, reply: {s: 200, b: "a"}},
   {match: {_: /b}, reply: {s: 404}},
-  {match: {_: /c}, reply: {s: 200, b: "c"}, serve: {span: 5s}}
+  {match: {_: /c}, reply: {s: 200, b: "c"}, serve: {pace: 5s}}
 ]}' | yurl
 ```
 
