@@ -7,6 +7,7 @@ Codeless, easy config: all good · CRUD · parallel · slow · trickle · drops 
 ```bash
 cargo install mockinx yurl    # yurl instead of curl
 mockinx 9999                  # start server on port 9999
+mockinx 9999 -c rules.yaml   # start with rules from file
 ```
 
 ```bash
