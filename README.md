@@ -88,7 +88,10 @@ serve:
 
   drop: 2kb            # kill connection after N bytes
   drop: 1s             # kill connection after N time
-  
+
+  hang: 10kb           # stop sending after N bytes, keep connection open
+  hang: 1s             # stop sending after N time, keep connection open
+
   first_byte: 2s       # time to first byte (delay)
 
   # operational constraints (connections, rate per second)

@@ -4,12 +4,21 @@ use crate::units::{
 };
 use serde_json::{Map, Value};
 
-/// How to drop a connection.
+/// How to drop a connection (close it).
 #[derive(Debug, Clone, PartialEq)]
 pub enum DropSpec {
     /// Drop after sending N bytes.
     AfterBytes(Range<ByteSize>),
     /// Drop after N time has elapsed.
+    AfterTime(Range<Duration>),
+}
+
+/// How to hang a connection (stop sending, keep open).
+#[derive(Debug, Clone, PartialEq)]
+pub enum HangSpec {
+    /// Hang after sending N bytes.
+    AfterBytes(Range<ByteSize>),
+    /// Hang after N time has elapsed.
     AfterTime(Range<Duration>),
 }
 
@@ -34,6 +43,8 @@ pub struct DeliverySpec {
     pub pace: Option<PaceSpec>,
     /// Kill connection after N bytes or N time (`drop:`).
     pub drop: Option<DropSpec>,
+    /// Hang connection after N bytes or N time — stop sending, keep open (`hang:`).
+    pub hang: Option<HangSpec>,
     /// Delay before first byte (`first_byte:`).
     pub first_byte: Option<Range<Duration>>,
 }
@@ -42,11 +53,13 @@ pub struct DeliverySpec {
 pub fn parse_delivery_fields(obj: &Map<String, Value>) -> Result<DeliverySpec, ParseError> {
     let pace = parse_pace(obj)?;
     let drop = parse_drop(obj)?;
+    let hang = parse_hang(obj)?;
     let first_byte = parse_first_byte(obj)?;
 
     Ok(DeliverySpec {
         pace,
         drop,
+        hang,
         first_byte,
     })
 }
@@ -123,6 +136,28 @@ fn parse_drop_value(s: &str) -> Result<Option<DropSpec>, ParseError> {
     } else {
         Err(ParseError::new(format!(
             "drop '{s}' is neither a valid byte size nor duration"
+        )))
+    }
+}
+
+fn parse_hang(obj: &Map<String, Value>) -> Result<Option<HangSpec>, ParseError> {
+    let hang_val = match obj.get("hang") {
+        None => return Ok(None),
+        Some(v) => v,
+    };
+
+    let s = hang_val
+        .as_str()
+        .ok_or_else(|| ParseError::new("hang must be a string (e.g. '1s', '10kb')"))?;
+
+    // Try byte size first, then duration
+    if let Ok(range) = parse_byte_size_range(s) {
+        Ok(Some(HangSpec::AfterBytes(range)))
+    } else if let Ok(range) = parse_duration_range(s) {
+        Ok(Some(HangSpec::AfterTime(range)))
+    } else {
+        Err(ParseError::new(format!(
+            "hang '{s}' is neither a valid byte size nor duration"
         )))
     }
 }

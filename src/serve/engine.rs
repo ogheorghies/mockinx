@@ -1,4 +1,4 @@
-use super::pace::{DeliverySpec, DropSpec, PaceSpec};
+use super::pace::{DeliverySpec, DropSpec, HangSpec, PaceSpec};
 use bytes::Bytes;
 use rand::Rng;
 use std::pin::Pin;
@@ -16,10 +16,14 @@ pub struct DeliveryStream {
     chunk_size: usize,
     /// Delay between chunks.
     chunk_delay: Option<std::time::Duration>,
-    /// Drop after this many bytes (truncation).
+    /// Drop after this many bytes (close connection).
     drop_after_bytes: Option<usize>,
-    /// Drop after this deadline.
+    /// Drop after this deadline (close connection).
     drop_deadline: Option<Instant>,
+    /// Hang after this many bytes (stop sending, keep open).
+    hang_after_bytes: Option<usize>,
+    /// Hang after this deadline (stop sending, keep open).
+    hang_deadline: Option<Instant>,
     /// Whether we've applied the first-byte delay.
     first_byte_done: bool,
     /// First-byte delay.
@@ -47,6 +51,19 @@ pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> Delive
 
     let drop_deadline = match &spec.drop {
         Some(DropSpec::AfterTime(r)) => {
+            let dur = r.sample(rng).as_std();
+            Some(Instant::now() + dur)
+        }
+        _ => None,
+    };
+
+    let hang_after_bytes = match &spec.hang {
+        Some(HangSpec::AfterBytes(r)) => Some(r.sample(rng).bytes() as usize),
+        _ => None,
+    };
+
+    let hang_deadline = match &spec.hang {
+        Some(HangSpec::AfterTime(r)) => {
             let dur = r.sample(rng).as_std();
             Some(Instant::now() + dur)
         }
@@ -98,6 +115,8 @@ pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> Delive
         chunk_delay,
         drop_after_bytes,
         drop_deadline,
+        hang_after_bytes,
+        hang_deadline,
         first_byte_done: false,
         first_byte_delay,
         sleep: None,
@@ -150,6 +169,20 @@ impl Stream for DeliveryStream {
                         Poll::Pending => return Poll::Pending,
                     }
                 }
+            }
+        }
+
+        // Check time-based hang (stop sending, keep connection open)
+        if let Some(deadline) = self.hang_deadline {
+            if Instant::now() >= deadline {
+                return Poll::Pending; // hang forever
+            }
+        }
+
+        // Check byte-based hang
+        if let Some(hang_bytes) = self.hang_after_bytes {
+            if self.offset >= hang_bytes {
+                return Poll::Pending; // hang forever
             }
         }
 
@@ -347,5 +380,49 @@ mod tests {
             elapsed >= std::time::Duration::from_millis(180),
             "elapsed {elapsed:?} too short"
         );
+    }
+
+    #[tokio::test]
+    async fn hang_after_bytes() {
+        let body = vec![0u8; 10000];
+        let spec = DeliverySpec {
+            hang: Some(HangSpec::AfterBytes(Range::Fixed(ByteSize(2048)))),
+            ..Default::default()
+        };
+        let stream = deliver(body, &spec, &mut rng());
+
+        // Use a timeout to avoid hanging the test forever
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            stream.collect::<Vec<_>>(),
+        )
+        .await;
+
+        // Should timeout (hang), not complete
+        assert!(result.is_err(), "stream should hang, not complete");
+    }
+
+    #[tokio::test]
+    async fn hang_after_time() {
+        let body = vec![0u8; 100000];
+        let spec = DeliverySpec {
+            pace: Some(PaceSpec::Chunk {
+                size: Range::Fixed(ByteSize(100)),
+                interval: Range::Fixed(Duration(std::time::Duration::from_millis(10))),
+            }),
+            hang: Some(HangSpec::AfterTime(Range::Fixed(Duration(
+                std::time::Duration::from_millis(100),
+            )))),
+            ..Default::default()
+        };
+        let stream = deliver(body, &spec, &mut rng());
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            stream.collect::<Vec<_>>(),
+        )
+        .await;
+
+        assert!(result.is_err(), "stream should hang, not complete");
     }
 }

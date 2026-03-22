@@ -32,6 +32,8 @@ const SERVE_ALIASES: &[(&str, &str)] = &[
     ("max_connections", "conn"),
     ("rate_limit", "rps"),
     ("throttle", "rps"),
+    ("freeze", "hang"),
+    ("stall", "hang"),
 ];
 
 const SERVE_HINTS: &[(&str, &str)] = &[
@@ -53,7 +55,7 @@ const REPLY_HINTS: &[(&str, &str)] = &[
 
 /// Valid keys for each block.
 const RULE_KEYS: &[&str] = &["match", "reply", "serve", "chaos"];
-const SERVE_KEYS: &[&str] = &["pace", "drop", "first_byte", "conn", "rps", "timeout"];
+const SERVE_KEYS: &[&str] = &["pace", "drop", "hang", "first_byte", "conn", "rps", "timeout"];
 const REPLY_KEYS: &[&str] = &["s", "h", "b"];
 
 /// Levenshtein edit distance between two strings.

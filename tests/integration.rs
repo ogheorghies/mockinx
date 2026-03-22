@@ -253,6 +253,34 @@ async fn drop_after_bytes_via_serve() {
     assert!(body.len() >= 512, "got too few bytes: {}", body.len());
 }
 
+#[tokio::test]
+async fn hang_after_bytes_via_serve() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/hang"},
+        "reply": {"s": 200, "b": {"rand!": {"size": "10kb", "seed": 1}}},
+        "serve": {"hang": "1kb"}
+    })).await;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(500))
+        .build()
+        .unwrap();
+
+    let result = client.get(&srv.url("/hang")).send().await;
+    // Client should timeout (connection hangs), not get a clean response
+    match result {
+        Ok(resp) => {
+            // Got headers, but body read should timeout
+            let body_result = resp.bytes().await;
+            assert!(body_result.is_err(), "body read should timeout on hang");
+        }
+        Err(e) => {
+            assert!(e.is_timeout(), "expected timeout error, got: {e}");
+        }
+    }
+}
+
 // =========================================================================
 // Behavior via serve:
 // =========================================================================

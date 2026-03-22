@@ -4,7 +4,7 @@ pub mod runtime;
 mod behavior_types;
 
 // Re-export types
-pub use pace::{DeliverySpec, DropSpec, PaceSpec, parse_delivery_fields, parse_pace_str};
+pub use pace::{DeliverySpec, DropSpec, HangSpec, PaceSpec, parse_delivery_fields, parse_pace_str};
 pub use engine::{DeliveryStream, deliver};
 pub use runtime::BehaviorRuntime;
 pub use behavior_types::{
@@ -18,7 +18,7 @@ use crate::units::ParseError;
 use serde_json::Value;
 
 /// All valid keys in a serve: block.
-const SERVE_KNOWN_KEYS: &[&str] = &["pace", "drop", "first_byte", "conn", "rps", "timeout"];
+const SERVE_KNOWN_KEYS: &[&str] = &["pace", "drop", "hang", "first_byte", "conn", "rps", "timeout"];
 
 /// Parse the merged `serve:` block — contains both delivery shaping and behavior fields.
 pub fn parse_serve(v: &Value) -> Result<(DeliverySpec, BehaviorSpec), ParseError> {
