@@ -7,7 +7,7 @@ Codeless, easy config: all good · CRUD · parallel · slow · trickle · drops 
 ```bash
 cargo install mockinx yurl    # yurl instead of curl
 mockinx 9999                  # start server on port 9999
-mockinx 9999 -c rules.yaml   # start with rules from file
+mockinx 9999 -c rules.yaml    # start with rules from file
 ```
 
 ```bash
@@ -171,22 +171,6 @@ echo '{p: localhost:9999/_mx, b: {
     {p: 1%, serve: {drop: 512b}}
   ]
 }}' | yurl
-```
-
-## Request log
-
-```bash
-# all recorded requests
-echo '{g: localhost:9999/_mx/log}' | yurl
-
-# filter by path
-echo '{g: localhost:9999/_mx/log, q: {path: /toys}}' | yurl
-
-# filter by method
-echo '{g: localhost:9999/_mx/log, q: {method: POST}}' | yurl
-
-# clear between tests
-echo '{d: localhost:9999/_mx/log}' | yurl
 ```
 
 ## Managing rules
