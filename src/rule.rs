@@ -166,10 +166,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_rule_with_crud_true() {
+        let rule = parse_rule(&json!({
+            "match": {"_": "/items"},
+            "reply": {"crud!": true}
+        }))
+        .unwrap();
+        match &rule.reply {
+            ReplyStrategy::Crud { spec, .. } => {
+                assert!(spec.data.is_empty());
+                assert_eq!(spec.id.name, "id");
+                assert_eq!(spec.id.new, "inc");
+            }
+            other => panic!("expected Crud, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_rule_with_crud_reply() {
         let rule = parse_rule(&json!({
             "match": {"_": "/toys"},
-            "reply": {"crud!": {"seed": [
+            "reply": {"crud!": {"data": [
                 {"id": 1, "name": "Ball"},
                 {"id": 3, "name": "Owl"}
             ]}}
@@ -177,7 +194,7 @@ mod tests {
         .unwrap();
         match &rule.reply {
             ReplyStrategy::Crud { spec, .. } => {
-                assert_eq!(spec.seed.len(), 2);
+                assert_eq!(spec.data.len(), 2);
             }
             other => panic!("expected Crud, got {other:?}"),
         }

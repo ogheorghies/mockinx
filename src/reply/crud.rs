@@ -19,13 +19,13 @@ struct CrudState {
 pub type CrudResponse = (u16, Value);
 
 impl CrudStore {
-    /// Create a new CRUD store from a spec, loading seed data.
+    /// Create a new CRUD store from a spec, loading initial data.
     pub fn new(spec: &CrudSpec) -> Self {
         let id_field = spec.id.name.clone();
         let mut items = IndexMap::new();
         let mut max_id: u64 = 0;
 
-        for item in &spec.seed {
+        for item in &spec.data {
             if let Some(id_val) = item.get(&id_field) {
                 let id_key = value_to_id_key(id_val);
                 if let Some(n) = id_val.as_u64() {
@@ -204,10 +204,10 @@ mod tests {
     use crate::serve::{CrudIdSpec, CrudSpec};
     use std::sync::Arc;
 
-    fn seeded_store() -> CrudStore {
+    fn data_store() -> CrudStore {
         CrudStore::new(&CrudSpec {
             id: CrudIdSpec::default(),
-            seed: vec![
+            data: vec![
                 json!({"id": 1, "name": "Ball", "price": 2.99}),
                 json!({"id": 3, "name": "Owl", "price": 5.99}),
             ],
@@ -217,15 +217,15 @@ mod tests {
     fn empty_store() -> CrudStore {
         CrudStore::new(&CrudSpec {
             id: CrudIdSpec::default(),
-            seed: vec![],
+            data: vec![],
         })
     }
 
     // --- Seed data ---
 
     #[test]
-    fn seed_data_loaded() {
-        let store = seeded_store();
+    fn initial_data_loaded() {
+        let store = data_store();
         let (status, body) = store.list();
         assert_eq!(status, 200);
         let items = body.as_array().unwrap();
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn list_returns_all() {
-        let store = seeded_store();
+        let store = data_store();
         let (_, body) = store.list();
         let items = body.as_array().unwrap();
         assert_eq!(items[0]["name"], "Ball");
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn get_by_id() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, body) = store.get("1");
         assert_eq!(status, 200);
         assert_eq!(body["name"], "Ball");
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn get_nonexistent() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, _) = store.get("99");
         assert_eq!(status, 404);
     }
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn create_assigns_inc_id() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, body) = store.create(json!({"name": "Car", "price": 1.50}));
         assert_eq!(status, 201);
         assert_eq!(body["id"], 4); // max seed id is 3, so next is 4
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn create_increments_id() {
-        let store = seeded_store();
+        let store = data_store();
         let (_, first) = store.create(json!({"name": "A"}));
         let (_, second) = store.create(json!({"name": "B"}));
         assert_eq!(first["id"], 4);
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn replace_existing() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, body) = store.replace("1", json!({"name": "Basketball", "price": 9.99}));
         assert_eq!(status, 200);
         assert_eq!(body["name"], "Basketball");
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn replace_nonexistent() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, _) = store.replace("99", json!({"name": "X"}));
         assert_eq!(status, 404);
     }
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn patch_merges_fields() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, body) = store.patch("1", json!({"price": 3.99}));
         assert_eq!(status, 200);
         assert_eq!(body["name"], "Ball"); // unchanged
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn patch_nonexistent() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, _) = store.patch("99", json!({"price": 1.0}));
         assert_eq!(status, 404);
     }
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn delete_existing() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, _) = store.delete("1");
         assert_eq!(status, 204);
         // Verify removed
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn delete_nonexistent() {
-        let store = seeded_store();
+        let store = data_store();
         let (status, _) = store.delete("99");
         assert_eq!(status, 404);
     }
@@ -352,7 +352,7 @@ mod tests {
                 name: "sku".into(),
                 new: "inc".into(),
             },
-            seed: vec![json!({"sku": 100, "name": "Widget"})],
+            data: vec![json!({"sku": 100, "name": "Widget"})],
         });
         let (status, body) = store.get("100");
         assert_eq!(status, 200);
@@ -371,7 +371,7 @@ mod tests {
                 name: "uid".into(),
                 new: "uuid".into(),
             },
-            seed: vec![],
+            data: vec![],
         });
         let (status, body) = store.create(json!({"name": "Widget"}));
         assert_eq!(status, 201);
@@ -404,7 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_operations() {
-        let store = Arc::new(seeded_store());
+        let store = Arc::new(data_store());
         let mut handles = Vec::new();
 
         for i in 0..10 {

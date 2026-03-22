@@ -66,9 +66,10 @@ reply:
   - {s: 200, b: "ok"}
 
 # crud — in-memory REST resource
-reply: {crud!: {seed: [{id: 1, name: Ball}, {id: 3, name: Owl}]}}
-reply: {crud!: {id: {name: sku, new: inc}}}     # auto-increment IDs
-reply: {crud!: {id: {name: uid, new: uuid}}}    # UUID IDs
+reply: {crud!: {data: [{id: 1, name: Ball}, {id: 3, name: Owl}]}}
+reply: {crud!: {id: {name: sku, new: inc}}}         # auto-increment IDs
+reply: {crud!: {id: {name: uid, new: uuid}}}        # UUID IDs
+reply: {crud!: true}                                # no data, id: "id", inc
 ```
 
 ### serve
@@ -151,7 +152,7 @@ echo '{p: localhost:9999/_mx, b: {
 # CRUD resource with latency
 echo '{p: localhost:9999/_mx, b: {
   match: {_: /toys},
-  reply: {crud!: {seed: [
+  reply: {crud!: {data: [
     {id: 1, name: Ball, price: 2.99},
     {id: 3, name: Owl, price: 5.99}
   ]}},

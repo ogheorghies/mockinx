@@ -75,10 +75,19 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
         }
         Value::Object(obj) => {
             if let Some(crud_val) = obj.get("crud!") {
-                let crud_obj = crud_val
-                    .as_object()
-                    .ok_or_else(|| ParseError("crud! must be an object".into()))?;
-                let spec = crate::serve::parse_crud_spec(crud_obj)?;
+                // crud!: true → empty CRUD with defaults
+                // crud!: {data: [...], id: {...}} → configured CRUD
+                let spec = if crud_val.as_bool() == Some(true) {
+                    crate::serve::CrudSpec {
+                        id: crate::serve::CrudIdSpec::default(),
+                        data: Vec::new(),
+                    }
+                } else {
+                    let crud_obj = crud_val
+                        .as_object()
+                        .ok_or_else(|| ParseError("crud! must be true or an object".into()))?;
+                    crate::serve::parse_crud_spec(crud_obj)?
+                };
                 // Extract headers from h: field if present
                 let mut headers = obj
                     .get("h")

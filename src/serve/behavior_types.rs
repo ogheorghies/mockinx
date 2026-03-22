@@ -52,7 +52,7 @@ impl Default for CrudIdSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrudSpec {
     pub id: CrudIdSpec,
-    pub seed: Vec<Value>,
+    pub data: Vec<Value>,
 }
 
 /// Endpoint-level behavior policies (parsed from `serve:` block).
@@ -206,13 +206,13 @@ pub fn parse_crud_spec(crud_obj: &Map<String, Value>) -> Result<CrudSpec, ParseE
         }
     };
 
-    let seed = match crud_obj.get("seed") {
+    let data = match crud_obj.get("data") {
         None => Vec::new(),
         Some(Value::Array(arr)) => arr.clone(),
-        Some(v) => return Err(ParseError(format!("crud.seed must be an array, got {v}"))),
+        Some(v) => return Err(ParseError(format!("crud.data must be an array, got {v}"))),
     };
 
-    Ok(CrudSpec { id, seed })
+    Ok(CrudSpec { id, data })
 }
 
 #[cfg(test)]
