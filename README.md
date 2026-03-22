@@ -111,8 +111,8 @@ serve:
 
 ### chaos
 
-Probabilistic overrides for reply and/or serve. Each entry has a weight (`p`)
-and optional `reply`/`serve` overrides. Unspecified fields inherit from the rule's defaults.
+Probabilistic overrides for reply and/or serve. Each entry has a percentage `p`
+and `reply`/`serve` overrides. Unspecified fields inherit from the rule's defaults.
 
 ```yaml
 # p is a percentage — unmatched remainder uses rule defaults

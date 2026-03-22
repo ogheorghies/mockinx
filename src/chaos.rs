@@ -7,7 +7,7 @@ use serde_json::Value;
 /// A chaos entry: probabilistic override for reply and/or delivery.
 #[derive(Debug, Clone)]
 pub struct ChaosEntry {
-    /// Weight as a percentage (0.1 = 0.1% of requests).
+    /// Percentage of requests (0.1 = 0.1%, 50 = 50%).
     pub p: f64,
     /// Optional reply override.
     pub reply: Option<ReplySpec>,
@@ -86,7 +86,7 @@ pub fn parse_chaos(v: &Value) -> Result<Vec<ChaosEntry>, ParseError> {
 
     if total_p > 100.0 {
         return Err(ParseError(format!(
-            "chaos weights sum to {total_p}, cannot exceed 100"
+            "chaos percentages sum to {total_p}, cannot exceed 100"
         )));
     }
 
@@ -95,8 +95,8 @@ pub fn parse_chaos(v: &Value) -> Result<Vec<ChaosEntry>, ParseError> {
 
 /// Resolve chaos for a single request.
 ///
-/// Rolls a random number [0, 100) and selects an entry based on cumulative weights.
-/// If no entry matches (weights sum < 100), returns Normal.
+/// Rolls a random number [0, 100) and selects an entry based on cumulative percentages.
+/// If no entry matches (percentages sum < 100), returns Normal.
 pub fn resolve_chaos(entries: &[ChaosEntry], rng: &mut impl Rng) -> ChaosResult {
     let roll: f64 = rng.r#gen::<f64>() * 100.0;
     let mut cumulative = 0.0;
