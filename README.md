@@ -146,12 +146,13 @@ chaos:
   reply: {s: 200, b: {"items": [1, 2, 3]}}
   serve: {pace: 2s, conn: {max: 3, over: {s: 429}}}
 
-# flaky endpoint — 5% errors, 2% drops
-- match: {_: /api/submit}
-  reply: {s: 200, b: {status: accepted}}
+# /toys/6 is flaky — overrides the CRUD rule (later = higher priority)
+- match: {g: /toys/6}
+  reply: {s: 200, b: {id: 6, name: Dice, price: 0.99}}
+  serve: {pace: 3s}
   chaos:
-    - {p: 5%, reply: {s: 500, b: "internal error"}}
-    - {p: 2%, serve: {drop: 512b}}
+    - {p: 30%, reply: {s: 500, b: "oops"}}
+    - {p: 10%, serve: {drop: 100b}}
 ```
 
 ## Full examples
