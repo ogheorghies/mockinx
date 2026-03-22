@@ -23,6 +23,10 @@ clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 yttp = "0.0.5"
 
+[[bin]]
+name = "baseline-server"
+path = "benches/baseline.rs"
+
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
