@@ -2,7 +2,7 @@
 
 \[MO-keen-x\]: `match` + `reply` + `serve` + `chaos` = what you get back.
 
-Codeless, easy config: all good · CRUD · parallel · slow · trickle · drops · errors
+Codeless, easy config: [OK](#reply) · [errors](#chaos) · [CRUD](#reply) · [parallel](#serve) · [fast](#performance) · [slow](#serve) · [trickle](#serve) · [drop](#serve)
 
 Rules use [yttp](https://crates.io/crates/yttp) conventions for HTTP requests and responses.
 
