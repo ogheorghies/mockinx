@@ -77,18 +77,22 @@ How the response is served — delivery shaping and operational constraints:
 ```yaml
 serve:
   # delivery shaping
-  pace: 5s                              # pacing: duration target (auto-chunked)
-  pace: 1kb@100ms      # pacing: explicit chunking
-  pace: 10kb/s                          # pacing: bandwidth cap
-  drop: 2kb                             # kill connection after N bytes
-  drop: 1s                              # kill connection after N time
-  first_byte: 2s                        # delay before first byte
+  pace: 5s             # pacing: duration target (auto-chunked)
+  pace: 1kb@100ms      # pacing: 1kb chunks at every 100ms
+  pace: 10kb/s         # pacing: bandwidth cap
+
+  drop: 2kb            # kill connection after N bytes
+  drop: 1s             # kill connection after N time
+  
+  first_byte: 2s       # time to first byte (delay)
 
   # operational constraints (connections, rate per second)
   conn: {max: 5, over: {s: 429, b: "too many"}}
   conn: {max: 5, over: block}
   conn: {max: 5, over: {block: 3s, then: {s: 429, b: "timeout"}}}
+  
   rps: {max: 100, over: {s: 429}}
+  
   timeout: 30s
 ```
 
@@ -96,11 +100,11 @@ Any scalar value supports jitter via ranges (`min..max` or `value..percent`):
 
 ```yaml
 serve:
-  pace: 4s..6s                                  # random timespan
-  pace: 512b..2kb@50ms..150ms  # random chunk size and delay
-  pace: 10kb/s..20%                    # random bandwidth 8kb/s..12kb/s
-  drop: 1kb..4kb                                # drop conn anywhere in that byte range
-  first_byte: 1s..10%                            # 900ms..1.1s
+  pace: 4s..6s                 # random timespan
+  pace: 512b..2kb@50ms..150ms  # random chunk size and sending interval
+  pace: 10kb/s..20%            # random bandwidth 8kb/s..12kb/s
+  drop: 1kb..4kb               # drop conn anywhere in that byte range
+  first_byte: 1s..10%          # 900ms..1.1s
 ```
 
 ### chaos
