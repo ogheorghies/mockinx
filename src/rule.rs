@@ -2,6 +2,7 @@ use crate::chaos::{ChaosEntry, parse_chaos};
 use crate::match_rule::{MatchRule, parse_match_rule};
 use crate::reply::{ReplyStrategy, parse_reply_strategy};
 use crate::serve::{BehaviorSpec, DeliverySpec, parse_serve};
+use crate::suggest::{suggest_rule_key, format_suggestion};
 use crate::units::ParseError;
 use serde_json::Value;
 
@@ -27,6 +28,17 @@ pub fn parse_rule(v: &Value) -> Result<Rule, ParseError> {
     let obj = v
         .as_object()
         .ok_or_else(|| ParseError::new("rule must be an object"))?;
+
+    // Check for unknown keys
+    let known = ["match", "reply", "serve", "chaos"];
+    for key in obj.keys() {
+        if !known.contains(&key.as_str()) {
+            if let Some(suggestion) = suggest_rule_key(key) {
+                return Err(ParseError::new(format_suggestion(key, "rule", &suggestion)));
+            }
+            return Err(ParseError::new(format!("unknown key '{key}' in rule")));
+        }
+    }
 
     let match_val = obj
         .get("match")

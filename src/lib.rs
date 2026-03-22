@@ -3,6 +3,7 @@ pub mod match_rule;
 pub mod reply;
 pub mod serve;
 pub mod chaos;
+pub mod suggest;
 pub mod rule;
 pub mod store;
 pub mod server;

@@ -13,14 +13,28 @@ pub use behavior_types::{
     parse_behavior, parse_crud_spec,
 };
 
+use crate::suggest::{suggest_serve_key, format_suggestion};
 use crate::units::ParseError;
 use serde_json::Value;
+
+/// All valid keys in a serve: block.
+const SERVE_KNOWN_KEYS: &[&str] = &["pace", "drop", "first_byte", "conn", "rps", "timeout"];
 
 /// Parse the merged `serve:` block — contains both delivery shaping and behavior fields.
 pub fn parse_serve(v: &Value) -> Result<(DeliverySpec, BehaviorSpec), ParseError> {
     let obj = v
         .as_object()
         .ok_or_else(|| ParseError::new("serve must be an object"))?;
+
+    // Check for unknown keys
+    for key in obj.keys() {
+        if !SERVE_KNOWN_KEYS.contains(&key.as_str()) {
+            if let Some(suggestion) = suggest_serve_key(key) {
+                return Err(ParseError::new(format_suggestion(key, "serve", &suggestion)));
+            }
+            return Err(ParseError::new(format!("unknown key '{key}' in serve")));
+        }
+    }
 
     let delivery = parse_delivery_fields(obj)?;
     let behavior = parse_behavior(v)?;
