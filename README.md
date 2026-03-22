@@ -26,7 +26,7 @@ A reply rule encompasses four aspects:
 ```yaml
 match: {}   # what to match     (method, URI)
 reply: {}   # what to respond   (status, payload)
-serve: {}   # how to serve it   (speed, chunks, ...)
+serve: {}   # how to serve it   (pace, drop, limits)
 chaos: []   # what can go wrong (probability → override)
 ```
 
@@ -116,8 +116,8 @@ and optional `reply`/`serve` overrides. Unspecified fields inherit from the rule
 # p is a percentage — unmatched remainder uses rule defaults
 chaos:
   - {p: 0.10, reply: {s: 500, b: "error"}}   # 0.1% error
-  - {p: 0.05, serve: {drop: 1kb}}            # 0.05% drop
-  - {p: 7.00, serve: {pace: 100b/s}}        # 7% crawl
+  - {p: 0.05, serve: {drop: 1kb}}            # 0.05% drop after 1kb
+  - {p: 7.00, serve: {pace: 100b/s}}         # 7% crawl
   # remaining 92.85% normal
 ```
 
