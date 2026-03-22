@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Mock server with codeless config of pacing, drops, throttling, and chaos"
 keywords = ["mock", "http", "testing", "chaos", "throttle"]
+license = "MIT"
 categories = ["development-tools::testing", "web-programming::http-server"]
 
 [dependencies]
