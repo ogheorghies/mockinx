@@ -6,8 +6,8 @@ Codeless, easy config: all good · CRUD · parallel · slow · trickle · drops 
 
 ```bash
 cargo install mockinx yurl    # yurl instead of curl
-mockinx 9999                  # start server on port 9999
-mockinx 9999 -c rules.yaml    # start with rules from file
+mockinx                       # start server on port 9999
+mockinx 9998 -c rules.yaml    # listen on 9998, rules from file
 ```
 
 ```bash
@@ -118,13 +118,13 @@ and `reply`/`serve` overrides. Unspecified fields inherit from the rule's defaul
 ```yaml
 # p is a percentage — unmatched remainder uses rule defaults
 chaos:
-  - {p: 0.1%, reply: {s: 500, b: "error"}}    # 0.1% error
-  - {p: 0.05%, serve: {drop: 1kb}}           # 0.05% drop after 1kb
-  - {p: 7%, serve: {pace: 100b/s}}           # 7% crawl
-  # remaining 92.85% normal
+  - {p: 0.10%, reply: {s: 500, b: "error"}}   # 0.1% error
+  - {p: 0.05%, serve: {drop: 1kb}}            # 0.05% drop after 1kb
+  - {p: 7.00%, serve: {pace: 100b/s}}         # 7% crawl
+  # remaining 92.85% normal (0 padding added for readability)
 ```
 
-## Full examples
+## Examples
 
 ```bash
 # Slow API with concurrency limit
@@ -173,7 +173,7 @@ echo '{p: localhost:9999/_mx, b: {
 }}' | yurl
 ```
 
-## Managing rules
+## Managing rules: /_mx
 
 ```bash
 # POST — append rules (single or array)
@@ -196,7 +196,7 @@ echo '{put: localhost:9999/_mx, b: []}' | yurl
 
 Rules are priority-ordered. Later rules take precedence.
 
-## Config file example
+## Managing rules: config file
 
 ```yaml
 # rules.yaml — load with: mockinx 9999 -c rules.yaml
@@ -228,6 +228,8 @@ Rules are priority-ordered. Later rules take precedence.
     - {p: 30%, reply: {s: 500, b: "oops"}}
     - {p: 10%, serve: {drop: 100b}}
 ```
+
+Load with: `mockinx -c rules.yaml`
 
 ## Tech
 
