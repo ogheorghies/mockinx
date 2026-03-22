@@ -4,8 +4,8 @@ use crate::chaos::{ChaosResult, resolve_chaos};
 use crate::crud::{CrudStore, extract_id};
 use crate::delivery_engine::{DeliveryStream, deliver};
 use crate::reply::{BodySpec, ReplySpec};
-use crate::store::{StubEntry, StubStore};
-use crate::stub::parse_stubs;
+use crate::store::{RuleEntry, RuleStore};
+use crate::rule::parse_rules;
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
@@ -43,34 +43,34 @@ impl Stream for PermitStream {
 /// Shared application state.
 #[derive(Clone)]
 pub struct AppState {
-    pub store: StubStore,
-    /// Per-stub behavior runtimes, keyed by stub index.
+    pub store: RuleStore,
+    /// Per-rule behavior runtimes, keyed by rule index.
     pub runtimes: Arc<RwLock<Vec<Arc<BehaviorRuntime>>>>,
-    /// Per-stub CRUD stores.
+    /// Per-rule CRUD stores.
     pub crud_stores: Arc<RwLock<HashMap<usize, Arc<CrudStore>>>>,
-    /// Global stub counter for runtime/crud indexing.
+    /// Global rule counter for runtime/crud indexing.
     pub stub_counter: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         AppState {
-            store: StubStore::new(),
+            store: RuleStore::new(),
             runtimes: Arc::new(RwLock::new(Vec::new())),
             crud_stores: Arc::new(RwLock::new(HashMap::new())),
             stub_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
-    /// Register stubs and create their runtimes.
-    pub fn register_stubs(&self, stubs: Vec<crate::stub::Stub>) {
+    /// Register rules and create their runtimes.
+    pub fn register_rules(&self, rules: Vec<crate::rule::Rule>) {
         let mut runtimes = self.runtimes.write().unwrap();
         let mut crud_stores = self.crud_stores.write().unwrap();
-        let start_idx = self.stub_counter.fetch_add(stubs.len(), std::sync::atomic::Ordering::Relaxed);
+        let start_idx = self.stub_counter.fetch_add(rules.len(), std::sync::atomic::Ordering::Relaxed);
 
-        for (i, stub) in stubs.into_iter().enumerate() {
+        for (i, rule) in rules.into_iter().enumerate() {
             let idx = start_idx + i;
-            let runtime = Arc::new(BehaviorRuntime::new(&stub.behavior));
+            let runtime = Arc::new(BehaviorRuntime::new(&rule.behavior));
 
             // Ensure runtimes vec is large enough
             while runtimes.len() <= idx {
@@ -79,13 +79,13 @@ impl AppState {
             runtimes[idx] = runtime;
 
             // Check for CRUD in ReplyStrategy or legacy behavior.crud
-            if let Some(crate::reply::ReplyStrategy::Crud { ref spec, .. }) = stub.reply {
+            if let Some(crate::reply::ReplyStrategy::Crud { ref spec, .. }) = rule.reply {
                 crud_stores.insert(idx, Arc::new(CrudStore::new(spec)));
-            } else if let Some(ref crud_spec) = stub.behavior.crud {
+            } else if let Some(ref crud_spec) = rule.behavior.crud {
                 crud_stores.insert(idx, Arc::new(CrudStore::new(crud_spec)));
             }
 
-            self.store.add(stub, idx);
+            self.store.add(rule, idx);
         }
     }
 }
@@ -104,7 +104,7 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// POST /_mx — register stubs.
+/// POST /_mx — register rules.
 async fn handle_stub_registration(
     State(state): State<AppState>,
     body: Bytes,
@@ -119,15 +119,15 @@ async fn handle_stub_registration(
         Err(e) => return (StatusCode::BAD_REQUEST, format!("parse error: {e}")).into_response(),
     };
 
-    let stubs = match parse_stubs(&val) {
+    let rules = match parse_rules(&val) {
         Ok(s) => s,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("stub error: {e}")).into_response(),
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("rule error: {e}")).into_response(),
     };
 
-    let count = stubs.len();
-    state.register_stubs(stubs);
+    let count = rules.len();
+    state.register_rules(rules);
 
-    (StatusCode::CREATED, format!("{count} stub(s) registered")).into_response()
+    (StatusCode::CREATED, format!("{count} rule(s) registered")).into_response()
 }
 
 /// Catch-all handler for matched requests.
@@ -146,19 +146,19 @@ async fn handle_request(
         Err(_) => return (StatusCode::BAD_REQUEST, "failed to read body").into_response(),
     };
 
-    // Match against stub store
+    // Match against rule store
     let entry = match state.store.match_request(&method, &path) {
         Some(e) => e,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    // Find the stub's runtime index
+    // Find the rule's runtime index
     let stub_idx = entry.index;
 
     // Check behavior policies
     let mut rng = StdRng::from_entropy();
     let permit = if let Some(runtime) = get_runtime(&state, stub_idx) {
-        match runtime.check(&entry.stub.behavior, &mut rng).await {
+        match runtime.check(&entry.rule.behavior, &mut rng).await {
             BehaviorResult::Reject(reply) => return build_reply_response(&reply),
             BehaviorResult::Proceed(permit) => permit,
         }
@@ -171,7 +171,7 @@ async fn handle_request(
 
 async fn resolve_and_deliver(
     state: &AppState,
-    entry: &Arc<StubEntry>,
+    entry: &Arc<RuleEntry>,
     method: &str,
     path: &str,
     body_bytes: &Bytes,
@@ -181,7 +181,7 @@ async fn resolve_and_deliver(
     peer_addr: Option<std::net::SocketAddr>,
 ) -> Response {
     // Check chaos first — may override reply and/or delivery
-    let (chaos_reply, chaos_delivery) = if let Some(ref chaos_entries) = entry.stub.chaos {
+    let (chaos_reply, chaos_delivery) = if let Some(ref chaos_entries) = entry.rule.chaos {
         match resolve_chaos(chaos_entries, rng) {
             ChaosResult::Normal => (None, None),
             ChaosResult::Override { reply, serve } => (reply, serve),
@@ -192,8 +192,8 @@ async fn resolve_and_deliver(
 
     // If chaos provided a reply, use it directly
     if let Some(ref chaos_reply) = chaos_reply {
-        let delivery = chaos_delivery.as_ref().unwrap_or(&entry.stub.delivery);
-        if let Some(ref timeout_range) = entry.stub.behavior.timeout {
+        let delivery = chaos_delivery.as_ref().unwrap_or(&entry.rule.delivery);
+        if let Some(ref timeout_range) = entry.rule.behavior.timeout {
             let timeout_dur = timeout_range.sample(rng).as_std();
             return match tokio::time::timeout(
                 timeout_dur,
@@ -207,7 +207,7 @@ async fn resolve_and_deliver(
     }
 
     // Resolve reply from ReplyStrategy
-    let reply = match &entry.stub.reply {
+    let reply = match &entry.rule.reply {
         Some(crate::reply::ReplyStrategy::Static(r)) => r.clone(),
         Some(crate::reply::ReplyStrategy::Sequence(replies)) => {
             // Per-connection cycling (falls back to global if no peer addr)
@@ -227,7 +227,7 @@ async fn resolve_and_deliver(
         }
         None => {
             // Legacy: check behavior.sequence and behavior.crud
-            if let Some(ref seq) = entry.stub.behavior.sequence {
+            if let Some(ref seq) = entry.rule.behavior.sequence {
                 let call_idx = entry.next_call() as usize;
                 seq.replies[call_idx % seq.replies.len()].clone()
             } else if let Some(crud_store) = get_crud_store(state, stub_idx) {
@@ -240,10 +240,10 @@ async fn resolve_and_deliver(
     };
 
     // Use chaos delivery override if present, otherwise rule default
-    let delivery = chaos_delivery.as_ref().unwrap_or(&entry.stub.delivery);
+    let delivery = chaos_delivery.as_ref().unwrap_or(&entry.rule.delivery);
 
     // Apply timeout if configured
-    if let Some(ref timeout_range) = entry.stub.behavior.timeout {
+    if let Some(ref timeout_range) = entry.rule.behavior.timeout {
         let timeout_dur = timeout_range.sample(rng).as_std();
         match tokio::time::timeout(
             timeout_dur,

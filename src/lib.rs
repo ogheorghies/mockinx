@@ -3,7 +3,7 @@ pub mod match_rule;
 pub mod reply;
 pub mod delivery;
 pub mod behavior;
-pub mod stub;
+pub mod rule;
 pub mod body;
 pub mod delivery_engine;
 pub mod store;

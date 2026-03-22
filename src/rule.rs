@@ -8,7 +8,7 @@ use serde_json::Value;
 
 /// A complete rule definition: match + reply + serve + chaos.
 #[derive(Debug, Clone)]
-pub struct Stub {
+pub struct Rule {
     /// Which requests this rule matches.
     pub match_rule: MatchRule,
     /// How to produce replies (static, sequence, or CRUD).
@@ -25,7 +25,7 @@ pub struct Stub {
 ///
 /// Accepts `serve:` (new, merged delivery + behavior) or legacy
 /// `delivery:` + `behavior:` (separate).
-pub fn parse_stub(v: &Value) -> Result<Stub, ParseError> {
+pub fn parse_rule(v: &Value) -> Result<Rule, ParseError> {
     let obj = v
         .as_object()
         .ok_or_else(|| ParseError("rule must be an object".into()))?;
@@ -76,7 +76,7 @@ pub fn parse_stub(v: &Value) -> Result<Stub, ParseError> {
         Some(v) => Some(parse_chaos(v)?),
     };
 
-    Ok(Stub {
+    Ok(Rule {
         match_rule,
         reply,
         delivery,
@@ -104,19 +104,19 @@ fn parse_serve(v: &Value) -> Result<(DeliverySpec, BehaviorSpec), ParseError> {
 /// Parse one or more rules from a `serde_json::Value`.
 ///
 /// Accepts either a single object (returns vec of one) or an array of objects.
-pub fn parse_stubs(v: &Value) -> Result<Vec<Stub>, ParseError> {
+pub fn parse_rules(v: &Value) -> Result<Vec<Rule>, ParseError> {
     match v {
         Value::Array(arr) => {
-            let mut stubs = Vec::with_capacity(arr.len());
+            let mut rules = Vec::with_capacity(arr.len());
             for (i, item) in arr.iter().enumerate() {
-                stubs.push(
-                    parse_stub(item)
+                rules.push(
+                    parse_rule(item)
                         .map_err(|e| ParseError(format!("rule[{i}]: {e}")))?,
                 );
             }
-            Ok(stubs)
+            Ok(rules)
         }
-        Value::Object(_) => Ok(vec![parse_stub(v)?]),
+        Value::Object(_) => Ok(vec![parse_rule(v)?]),
         _ => Err(ParseError("rules must be an object or array".into())),
     }
 }
@@ -140,46 +140,46 @@ mod tests {
 
     #[test]
     fn parse_minimal_rule() {
-        let stub = parse_stub(&json!({
+        let rule = parse_rule(&json!({
             "match": {"g": "/path"},
             "reply": {"s": 200}
         }))
         .unwrap();
         assert_eq!(
-            stub.match_rule,
+            rule.match_rule,
             MatchRule::MethodPath {
                 method: Some("GET".into()),
                 path: "/path".into()
             }
         );
-        assert_eq!(unwrap_static(stub.reply.as_ref().unwrap()).status, 200);
-        assert_eq!(stub.delivery, DeliverySpec::default());
-        assert_eq!(stub.behavior, BehaviorSpec::default());
+        assert_eq!(unwrap_static(rule.reply.as_ref().unwrap()).status, 200);
+        assert_eq!(rule.delivery, DeliverySpec::default());
+        assert_eq!(rule.behavior, BehaviorSpec::default());
     }
 
     #[test]
     fn parse_rule_with_serve() {
-        let stub = parse_stub(&json!({
+        let rule = parse_rule(&json!({
             "match": {"g": "/api/data"},
             "reply": {"s": 200, "b": {"items": [1, 2, 3]}},
             "serve": {"first_byte": "2s", "pace": "5s", "conn": {"max": 5, "over": {"block": "3s", "then": {"s": 429}}}}
         }))
         .unwrap();
-        assert!(stub.reply.is_some());
-        assert!(stub.delivery.first_byte.is_some());
-        assert!(stub.delivery.pace.is_some());
-        assert!(stub.behavior.concurrency.is_some());
+        assert!(rule.reply.is_some());
+        assert!(rule.delivery.first_byte.is_some());
+        assert!(rule.delivery.pace.is_some());
+        assert!(rule.behavior.concurrency.is_some());
     }
 
     #[test]
     fn parse_rule_with_serve_delivery_only() {
-        let stub = parse_stub(&json!({
+        let rule = parse_rule(&json!({
             "match": {"_": "/download"},
             "reply": {"s": 200, "b": {"rand!": {"size": "10mb", "seed": 42}}},
             "serve": {"speed": "10kb/s", "drop": "2kb"}
         }))
         .unwrap();
-        let r = unwrap_static(stub.reply.as_ref().unwrap());
+        let r = unwrap_static(rule.reply.as_ref().unwrap());
         match &r.body {
             BodySpec::Rand { size, seed } => {
                 assert_eq!(size.bytes(), 10 * 1024 * 1024);
@@ -187,7 +187,7 @@ mod tests {
             }
             other => panic!("expected Rand, got {other:?}"),
         }
-        match &stub.delivery.drop {
+        match &rule.delivery.drop {
             Some(DropSpec::AfterBytes(Range::Fixed(bs))) => assert_eq!(bs.bytes(), 2048),
             other => panic!("expected AfterBytes, got {other:?}"),
         }
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn parse_rule_with_sequence_no_reply() {
-        let stub = parse_stub(&json!({
+        let rule = parse_rule(&json!({
             "match": {"_": "/auth"},
             "behavior": {
                 "sequence": {
@@ -208,15 +208,15 @@ mod tests {
             }
         }))
         .unwrap();
-        assert!(stub.reply.is_none());
-        let seq = stub.behavior.sequence.unwrap();
+        assert!(rule.reply.is_none());
+        let seq = rule.behavior.sequence.unwrap();
         assert_eq!(seq.per, SequenceScope::Stub);
         assert_eq!(seq.replies.len(), 2);
     }
 
     #[test]
     fn parse_rule_with_crud_no_reply() {
-        let stub = parse_stub(&json!({
+        let rule = parse_rule(&json!({
             "match": {"_": "/toys"},
             "behavior": {
                 "crud": {
@@ -228,13 +228,13 @@ mod tests {
             }
         }))
         .unwrap();
-        assert!(stub.reply.is_none());
-        assert!(stub.behavior.crud.is_some());
+        assert!(rule.reply.is_none());
+        assert!(rule.behavior.crud.is_some());
     }
 
     #[test]
     fn parse_rule_error_no_response_source() {
-        assert!(parse_stub(&json!({
+        assert!(parse_rule(&json!({
             "match": {"g": "/path"}
         }))
         .is_err());
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn parse_rule_error_no_match() {
-        assert!(parse_stub(&json!({
+        assert!(parse_rule(&json!({
             "reply": {"s": 200}
         }))
         .is_err());
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn parse_rule_error_invalid_match() {
-        assert!(parse_stub(&json!({
+        assert!(parse_rule(&json!({
             "match": 42,
             "reply": {"s": 200}
         }))
@@ -259,28 +259,28 @@ mod tests {
 
     #[test]
     fn parse_rules_single() {
-        let stubs = parse_stubs(&json!({
+        let rules = parse_rules(&json!({
             "match": {"g": "/path"},
             "reply": {"s": 200}
         }))
         .unwrap();
-        assert_eq!(stubs.len(), 1);
+        assert_eq!(rules.len(), 1);
     }
 
     #[test]
     fn parse_rules_array() {
-        let stubs = parse_stubs(&json!([
+        let rules = parse_rules(&json!([
             {"match": {"_": "/a"}, "reply": {"s": 200, "b": "a"}},
             {"match": {"_": "/b"}, "reply": {"s": 404}},
             {"match": {"_": "/c"}, "reply": {"s": 200, "b": "c"}, "serve": {"span": "5s"}}
         ]))
         .unwrap();
-        assert_eq!(stubs.len(), 3);
+        assert_eq!(rules.len(), 3);
     }
 
     #[test]
     fn parse_rules_array_error_includes_index() {
-        let result = parse_stubs(&json!([
+        let result = parse_rules(&json!([
             {"match": {"g": "/ok"}, "reply": {"s": 200}},
             {"match": {"g": "/bad"}}
         ]));
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn parse_rules_not_object_or_array() {
-        assert!(parse_stubs(&json!("bad")).is_err());
+        assert!(parse_rules(&json!("bad")).is_err());
     }
 
     #[test]
@@ -300,8 +300,8 @@ match: {g: /toys/3}
 reply: {s: 200, h: {ct!: j!}, b: {name: Owl, price: 5.99}}
 "#;
         let val = yttp::parse(yaml).unwrap();
-        let stub = parse_stub(&val).unwrap();
-        let r = unwrap_static(stub.reply.as_ref().unwrap());
+        let rule = parse_rule(&val).unwrap();
+        let r = unwrap_static(rule.reply.as_ref().unwrap());
         assert_eq!(r.status, 200);
         assert_eq!(r.headers["Content-Type"], "application/json");
     }
@@ -320,14 +320,14 @@ behavior:
       - {id: 3, name: Owl, price: 5.99}
 "#;
         let val = yttp::parse(yaml).unwrap();
-        let stub = parse_stub(&val).unwrap();
-        assert!(stub.behavior.crud.is_some());
-        assert!(stub.delivery.first_byte.is_some());
+        let rule = parse_rule(&val).unwrap();
+        assert!(rule.behavior.crud.is_some());
+        assert!(rule.delivery.first_byte.is_some());
     }
 
     #[test]
     fn parse_serve_with_conn_and_rps() {
-        let stub = parse_stub(&json!({
+        let rule = parse_rule(&json!({
             "match": {"_": "/api"},
             "reply": {"s": 200},
             "serve": {
@@ -337,8 +337,8 @@ behavior:
             }
         }))
         .unwrap();
-        assert!(stub.behavior.concurrency.is_some());
-        assert!(stub.behavior.rate_limit.is_some());
-        assert!(stub.behavior.timeout.is_some());
+        assert!(rule.behavior.concurrency.is_some());
+        assert!(rule.behavior.rate_limit.is_some());
+        assert!(rule.behavior.timeout.is_some());
     }
 }

@@ -1,6 +1,6 @@
 use clap::Parser;
 use mockinx::server::{AppState, build_router};
-use mockinx::stub::parse_stubs;
+use mockinx::rule::parse_rules;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
@@ -48,8 +48,8 @@ async fn main() {
 fn load_config(path: &str, state: &AppState) -> Result<usize, String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
     let val = yttp::parse(&content).map_err(|e| format!("parse error: {e}"))?;
-    let stubs = parse_stubs(&val).map_err(|e| format!("rule error: {e}"))?;
-    let count = stubs.len();
-    state.register_stubs(stubs);
+    let rules = parse_rules(&val).map_err(|e| format!("rule error: {e}"))?;
+    let count = rules.len();
+    state.register_rules(rules);
     Ok(count)
 }

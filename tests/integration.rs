@@ -414,8 +414,8 @@ async fn config_file_loading() {
     let state = AppState::new();
     let content = std::fs::read_to_string(&config_path).unwrap();
     let val = yttp::parse(&content).unwrap();
-    let stubs = mockinx::stub::parse_stubs(&val).unwrap();
-    state.register_stubs(stubs);
+    let rules = mockinx::rule::parse_rules(&val).unwrap();
+    state.register_rules(rules);
 
     let app = build_router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

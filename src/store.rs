@@ -1,12 +1,12 @@
-use crate::stub::Stub;
+use crate::rule::Rule;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-/// A stub with runtime state.
-pub struct StubEntry {
-    pub stub: Stub,
+/// A rule with runtime state.
+pub struct RuleEntry {
+    pub rule: Rule,
     /// Global index for runtime/CRUD store lookup.
     pub index: usize,
     /// Global call counter (used for per-rule sequences, legacy).
@@ -15,10 +15,10 @@ pub struct StubEntry {
     conn_counters: Mutex<HashMap<SocketAddr, u64>>,
 }
 
-impl StubEntry {
-    pub fn new(stub: Stub, index: usize) -> Self {
-        StubEntry {
-            stub,
+impl RuleEntry {
+    pub fn new(rule: Rule, index: usize) -> Self {
+        RuleEntry {
+            rule,
             index,
             call_count: AtomicU64::new(0),
             conn_counters: Mutex::new(HashMap::new()),
@@ -40,56 +40,56 @@ impl StubEntry {
     }
 }
 
-/// Thread-safe, priority-ordered store for registered stubs.
+/// Thread-safe, priority-ordered store for registered rules.
 ///
-/// Later stubs take precedence over earlier ones (matched in reverse order).
+/// Later rules take precedence over earlier ones (matched in reverse order).
 #[derive(Clone)]
-pub struct StubStore {
-    entries: Arc<RwLock<Vec<Arc<StubEntry>>>>,
+pub struct RuleStore {
+    entries: Arc<RwLock<Vec<Arc<RuleEntry>>>>,
 }
 
-impl StubStore {
+impl RuleStore {
     pub fn new() -> Self {
-        StubStore {
+        RuleStore {
             entries: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
-    /// Add a single stub with the given index. It takes highest priority.
-    pub fn add(&self, stub: Stub, index: usize) {
-        let entry = Arc::new(StubEntry::new(stub, index));
+    /// Add a single rule with the given index. It takes highest priority.
+    pub fn add(&self, rule: Rule, index: usize) {
+        let entry = Arc::new(RuleEntry::new(rule, index));
         self.entries.write().unwrap().push(entry);
     }
 
-    /// Add multiple stubs, maintaining their relative order.
-    /// The last stub in the batch gets highest priority.
+    /// Add multiple rules, maintaining their relative order.
+    /// The last rule in the batch gets highest priority.
     /// Indices are assigned starting from `start_index`.
-    pub fn add_batch(&self, stubs: Vec<Stub>, start_index: usize) {
+    pub fn add_batch(&self, rules: Vec<Rule>, start_index: usize) {
         let mut entries = self.entries.write().unwrap();
-        for (i, stub) in stubs.into_iter().enumerate() {
-            entries.push(Arc::new(StubEntry::new(stub, start_index + i)));
+        for (i, rule) in rules.into_iter().enumerate() {
+            entries.push(Arc::new(RuleEntry::new(rule, start_index + i)));
         }
     }
 
-    /// Find the best matching stub for the given method and path.
+    /// Find the best matching rule for the given method and path.
     ///
     /// Iterates in reverse order (last added = highest priority).
-    pub fn match_request(&self, method: &str, path: &str) -> Option<Arc<StubEntry>> {
+    pub fn match_request(&self, method: &str, path: &str) -> Option<Arc<RuleEntry>> {
         let entries = self.entries.read().unwrap();
         for entry in entries.iter().rev() {
-            if entry.stub.match_rule.matches(method, path) {
+            if entry.rule.match_rule.matches(method, path) {
                 return Some(Arc::clone(entry));
             }
         }
         None
     }
 
-    /// Remove all stubs.
+    /// Remove all rules.
     pub fn clear(&self) {
         self.entries.write().unwrap().clear();
     }
 
-    /// Number of registered stubs.
+    /// Number of registered rules.
     pub fn len(&self) -> usize {
         self.entries.read().unwrap().len()
     }
@@ -99,7 +99,7 @@ impl StubStore {
     }
 }
 
-impl Default for StubStore {
+impl Default for RuleStore {
     fn default() -> Self {
         Self::new()
     }
@@ -114,8 +114,8 @@ mod tests {
     use crate::reply::{ReplySpec, ReplyStrategy};
     use serde_json::json;
 
-    fn stub_with_path(method: Option<&str>, path: &str, status: u16) -> Stub {
-        Stub {
+    fn stub_with_path(method: Option<&str>, path: &str, status: u16) -> Rule {
+        Rule {
             match_rule: MatchRule::MethodPath {
                 method: method.map(|m| m.to_string()),
                 path: path.to_string(),
@@ -130,8 +130,8 @@ mod tests {
         }
     }
 
-    fn catch_all_stub(status: u16) -> Stub {
-        Stub {
+    fn catch_all_stub(status: u16) -> Rule {
+        Rule {
             match_rule: MatchRule::CatchAll,
             reply: Some(ReplyStrategy::Static(ReplySpec {
                 status,
@@ -143,8 +143,8 @@ mod tests {
         }
     }
 
-    fn get_status(entry: &Arc<StubEntry>) -> u16 {
-        match entry.stub.reply.as_ref().unwrap() {
+    fn get_status(entry: &Arc<RuleEntry>) -> u16 {
+        match entry.rule.reply.as_ref().unwrap() {
             ReplyStrategy::Static(r) => r.status,
             _ => panic!("expected Static"),
         }
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn add_and_match() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add(stub_with_path(Some("GET"), "/api/data", 200), 0);
         let entry = store.match_request("GET", "/api/data").unwrap();
         assert_eq!(get_status(&entry), 200);
@@ -160,14 +160,14 @@ mod tests {
 
     #[test]
     fn no_match_returns_none() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add(stub_with_path(Some("GET"), "/api/data", 200), 0);
         assert!(store.match_request("GET", "/other").is_none());
     }
 
     #[test]
     fn later_stubs_have_priority() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add(stub_with_path(None, "/path", 200), 0);
         store.add(stub_with_path(None, "/path", 201), 1);
         let entry = store.match_request("GET", "/path").unwrap();
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn batch_preserves_order() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add_batch(vec![
             stub_with_path(None, "/a", 200),
             stub_with_path(None, "/b", 201),
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn clear_removes_all() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add(stub_with_path(Some("GET"), "/path", 200), 0);
         assert_eq!(store.len(), 1);
         store.clear();
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn catch_all_lower_priority_than_specific() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add(catch_all_stub(404), 0);
         store.add(stub_with_path(Some("GET"), "/specific", 200), 1);
         // Specific wins for /specific
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn sequence_counter_increments() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add(stub_with_path(Some("GET"), "/path", 200), 0);
         let entry = store.match_request("GET", "/path").unwrap();
         assert_eq!(entry.next_call(), 0);
@@ -223,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn thread_safety_concurrent_access() {
-        let store = StubStore::new();
+        let store = RuleStore::new();
         store.add(stub_with_path(Some("GET"), "/path", 200), 0);
 
         let mut handles = Vec::new();
