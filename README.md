@@ -78,8 +78,8 @@ How the response is served — delivery shaping and operational constraints:
 serve:
   # delivery shaping
   pace: 5s                              # pacing: duration target (auto-chunked)
-  pace: {chunk: 1kb, delay: 100ms}      # pacing: explicit chunking
-  pace: 10kb/s                 # pacing: bandwidth cap
+  pace: 1kb@100ms      # pacing: explicit chunking
+  pace: 10kb/s                          # pacing: bandwidth cap
   drop: 2kb                             # kill connection after N bytes
   drop: 1s                              # kill connection after N time
   first_byte: 2s                        # delay before first byte
@@ -97,7 +97,7 @@ Any scalar value supports jitter via ranges (`min..max` or `value..percent`):
 ```yaml
 serve:
   pace: 4s..6s                                  # random timespan
-  pace: {chunk: 512b..2kb, delay: 50ms..150ms}  # random chunk size and delay
+  pace: 512b..2kb@50ms..150ms  # random chunk size and delay
   pace: 10kb/s..20%                    # random bandwidth 8kb/s..12kb/s
   drop: 1kb..4kb                                # drop conn anywhere in that byte range
   first_byte: 1s..10%                            # 900ms..1.1s
