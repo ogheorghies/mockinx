@@ -1,0 +1,1 @@
+[{"match": {"g": "/test"}, "reply": {"s": 200}, "chaos": [{"p": 7, "reply": {"s": 500}}]}]

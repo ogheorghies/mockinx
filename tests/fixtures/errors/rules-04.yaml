@@ -1,0 +1,4 @@
+# Typo in serve key: fist_byte → should suggest first_byte
+- match: {g: /test}
+  reply: {s: 200}
+  serve: {fist_byte: 2s}

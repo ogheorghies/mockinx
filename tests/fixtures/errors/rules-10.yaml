@@ -1,0 +1,4 @@
+# Batch: two bad rules
+- match: {g: /ok}
+  reply: {s: 200}
+- match: {g: /bad}

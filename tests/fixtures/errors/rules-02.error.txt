@@ -1,0 +1,1 @@
+rule[0]: rule requires 'match' field

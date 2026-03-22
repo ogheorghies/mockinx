@@ -1,0 +1,1 @@
+rule[0].chaos: chaos percentages sum to 110%, cannot exceed 100%

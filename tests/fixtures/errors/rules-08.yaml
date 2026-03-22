@@ -1,0 +1,4 @@
+# Semantic warning: drop fires before pace completes
+- match: {g: /test}
+  reply: {s: 200, b: hello}
+  serve: {pace: 5s, drop: 500ms}

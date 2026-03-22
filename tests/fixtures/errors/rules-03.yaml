@@ -1,0 +1,3 @@
+# Unknown key 'response' → should suggest 'reply'
+- match: {g: /test}
+  response: {s: 200}

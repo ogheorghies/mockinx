@@ -1,0 +1,5 @@
+# Unknown serve key 'fail' → should hint "use chaos: instead"
+- match: {g: /test}
+  reply: {s: 200}
+  serve:
+    fail: {rate: 0.5}
