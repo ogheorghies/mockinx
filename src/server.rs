@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post, put};
 use axum::Router;
 use bytes::Bytes;
 use rand::SeedableRng;
@@ -86,6 +86,14 @@ impl AppState {
             self.store.add(rule, idx);
         }
     }
+
+    /// Clear all rules, runtimes, and CRUD stores.
+    pub fn clear_all(&self) {
+        self.store.clear();
+        self.runtimes.write().unwrap().clear();
+        self.crud_stores.write().unwrap().clear();
+        self.stub_counter.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Default for AppState {
@@ -97,35 +105,59 @@ impl Default for AppState {
 /// Build the axum router.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/_mx", post(handle_stub_registration))
+        .route("/_mx", get(handle_list_rules).post(handle_append_rules).put(handle_replace_rules))
         .fallback(handle_request)
         .with_state(state)
 }
 
-/// POST /_mx — register rules.
-async fn handle_stub_registration(
+/// GET /_mx — list active rules.
+async fn handle_list_rules(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let sources = state.store.list_sources();
+    axum::Json(sources).into_response()
+}
+
+/// POST /_mx — append rules.
+async fn handle_append_rules(
     State(state): State<AppState>,
     body: Bytes,
 ) -> impl IntoResponse {
-    let body_str = match std::str::from_utf8(&body) {
-        Ok(s) => s,
-        Err(_) => return (StatusCode::BAD_REQUEST, "invalid UTF-8").into_response(),
-    };
+    match parse_body_as_rules(&body) {
+        Ok(rules) => {
+            let count = rules.len();
+            state.register_rules(rules);
+            (StatusCode::CREATED, format!("{count} rule(s) added")).into_response()
+        }
+        Err(resp) => resp,
+    }
+}
 
-    let val = match yttp::parse(body_str) {
-        Ok(v) => v,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("parse error: {e}")).into_response(),
-    };
+/// PUT /_mx — replace all rules.
+async fn handle_replace_rules(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> impl IntoResponse {
+    match parse_body_as_rules(&body) {
+        Ok(rules) => {
+            state.clear_all();
+            let count = rules.len();
+            state.register_rules(rules);
+            (StatusCode::OK, format!("{count} rule(s) loaded")).into_response()
+        }
+        Err(resp) => resp,
+    }
+}
 
-    let rules = match parse_rules(&val) {
-        Ok(s) => s,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("rule error: {e}")).into_response(),
-    };
+fn parse_body_as_rules(body: &Bytes) -> Result<Vec<crate::rule::Rule>, Response> {
+    let body_str = std::str::from_utf8(body)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid UTF-8").into_response())?;
 
-    let count = rules.len();
-    state.register_rules(rules);
+    let val = yttp::parse(body_str)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("parse error: {e}")).into_response())?;
 
-    (StatusCode::CREATED, format!("{count} rule(s) registered")).into_response()
+    parse_rules(&val)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("rule error: {e}")).into_response())
 }
 
 /// Catch-all handler for matched requests.

@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "yttp"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "base64",
  "serde_json",

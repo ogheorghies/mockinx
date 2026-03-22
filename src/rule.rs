@@ -18,6 +18,8 @@ pub struct Rule {
     pub behavior: BehaviorSpec,
     /// Probabilistic overrides.
     pub chaos: Option<Vec<ChaosEntry>>,
+    /// Original parsed value (for GET /_mx serialization).
+    pub source: Value,
 }
 
 /// Parse a single rule from a `serde_json::Value` object.
@@ -52,6 +54,7 @@ pub fn parse_rule(v: &Value) -> Result<Rule, ParseError> {
         delivery,
         behavior,
         chaos,
+        source: v.clone(),
     })
 }
 

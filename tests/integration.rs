@@ -689,6 +689,108 @@ async fn fixture_unmatched_returns_404() {
 }
 
 // =========================================================================
+// GET /_mx and PUT /_mx
+// =========================================================================
+
+#[tokio::test]
+async fn get_mx_empty() {
+    let srv = TestServer::start().await;
+    let resp = reqwest::get(&srv.url("/_mx")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn get_mx_after_post() {
+    let srv = TestServer::start().await;
+    srv.register("{match: {g: /a}, reply: {s: 200}}").await;
+    srv.register("{match: {g: /b}, reply: {s: 201}}").await;
+
+    let resp = reqwest::get(&srv.url("/_mx")).await.unwrap();
+    let body: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(body.len(), 2);
+    // Most recent first
+    assert_eq!(body[0]["match"]["g"], "/b");
+    assert_eq!(body[1]["match"]["g"], "/a");
+}
+
+#[tokio::test]
+async fn put_mx_replaces_rules() {
+    let srv = TestServer::start().await;
+    let client = reqwest::Client::new();
+
+    // POST a rule
+    srv.register("{match: {g: /old}, reply: {s: 200, b: old}}").await;
+    let resp = client.get(&srv.url("/old")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // PUT replaces everything
+    let resp = client
+        .put(&srv.url("/_mx"))
+        .body("{match: {g: /new}, reply: {s: 200, b: new}}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Old rule gone
+    let resp = client.get(&srv.url("/old")).send().await.unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // New rule active
+    let resp = client.get(&srv.url("/new")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "new");
+}
+
+#[tokio::test]
+async fn put_mx_empty_clears() {
+    let srv = TestServer::start().await;
+    let client = reqwest::Client::new();
+
+    srv.register("{match: {g: /x}, reply: {s: 200}}").await;
+
+    // PUT with empty array clears
+    let resp = client.put(&srv.url("/_mx")).body("[]").send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = client.get(&srv.url("/x")).send().await.unwrap();
+    assert_eq!(resp.status(), 404);
+
+    let resp = reqwest::get(&srv.url("/_mx")).await.unwrap();
+    let body: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn post_appends_after_put() {
+    let srv = TestServer::start().await;
+    let client = reqwest::Client::new();
+
+    // PUT one rule
+    client
+        .put(&srv.url("/_mx"))
+        .body("{match: {g: /a}, reply: {s: 200, b: a}}")
+        .send()
+        .await
+        .unwrap();
+
+    // POST another
+    srv.register("{match: {g: /b}, reply: {s: 201, b: b}}").await;
+
+    // Both active
+    let resp = client.get(&srv.url("/a")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp = client.get(&srv.url("/b")).send().await.unwrap();
+    assert_eq!(resp.status(), 201);
+
+    let resp = reqwest::get(&srv.url("/_mx")).await.unwrap();
+    let body: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(body.len(), 2);
+}
+
+// =========================================================================
 // Malformed input
 // =========================================================================
 

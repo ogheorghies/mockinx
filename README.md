@@ -124,37 +124,6 @@ chaos:
   # remaining 92.85% normal
 ```
 
-## Config file example
-
-```yaml
-# rules.yaml — load with: mockinx 9999 -c rules.yaml
-
-# simple static reply
-- match: {g: /health}
-  reply: {s: 200, b: ok}
-
-# CRUD resource
-- match: {_: /toys}
-  reply:
-    crud!:
-      data:
-        - {id: 1, name: Ball, price: 2.99}
-        - {id: 3, name: Owl, price: 5.99}
-
-# slow endpoint with concurrency limit
-- match: {g: /api/data}
-  reply: {s: 200, b: {"items": [1, 2, 3]}}
-  serve: {pace: 2s, conn: {max: 3, over: {s: 429}}}
-
-# /toys/6 is flaky — overrides the CRUD rule (later = higher priority)
-- match: {g: /toys/6}
-  reply: {s: 200, b: {id: 6, name: Dice, price: 0.99}}
-  serve: {pace: 3s}
-  chaos:
-    - {p: 30%, reply: {s: 500, b: "oops"}}
-    - {p: 10%, serve: {drop: 100b}}
-```
-
 ## Full examples
 
 ```bash
@@ -220,19 +189,61 @@ echo '{g: localhost:9999/_mx/log, q: {method: POST}}' | yurl
 echo '{d: localhost:9999/_mx/log}' | yurl
 ```
 
-## Multiple rules
-
-`_mx` accepts a single rule or an array:
+## Managing rules
 
 ```bash
+# POST — append rules (single or array)
 echo '{p: localhost:9999/_mx, b: [
   {match: {_: /a}, reply: {s: 200, b: "a"}},
-  {match: {_: /b}, reply: {s: 404}},
-  {match: {_: /c}, reply: {s: 200, b: "c"}, serve: {pace: 5s}}
+  {match: {_: /b}, reply: {s: 404}}
 ]}' | yurl
+
+# GET — list active rules (most recent first)
+echo '{g: localhost:9999/_mx}' | yurl
+
+# PUT — replace all rules (atomic reset + load)
+echo '{put: localhost:9999/_mx, b: [
+  {match: {_: /new}, reply: {s: 200, b: "fresh start"}}
+]}' | yurl
+
+# PUT with empty array — clear all rules
+echo '{put: localhost:9999/_mx, b: []}' | yurl
 ```
 
 Rules are priority-ordered. Later rules take precedence.
+
+## Config file example
+
+```yaml
+# rules.yaml — load with: mockinx 9999 -c rules.yaml
+# see: ./tests/fixtures/rules.yaml
+# equivalent to posting at /_mx - see yurl examples above.
+
+# simple static reply
+- match: {g: /health}
+  reply: {s: 200, b: ok}
+
+# CRUD resource
+- match: {_: /toys}
+  reply:
+    crud!:
+      data:
+        - {id: 1, name: Ball, price: 2.99}
+        - {id: 3, name: Owl, price: 5.99}
+
+# slow endpoint with concurrency limit
+- match: {g: /api/data}
+  reply: {s: 200, b: {"items": [1, 2, 3]}}
+  serve: {pace: 2s, conn: {max: 3, over: {s: 429}}}
+
+# /toys/6 is flaky — overrides the CRUD rule (later = higher priority)
+- match: {g: /toys/6}
+  reply: {s: 200, b: {id: 6, name: Dice, price: 0.99}}
+  serve: {pace: 3s}
+  chaos:
+    - {p: 30%, reply: {s: 500, b: "oops"}}
+    - {p: 10%, serve: {drop: 100b}}
+```
 
 ## Tech
 

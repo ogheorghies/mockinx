@@ -94,6 +94,12 @@ impl RuleStore {
         self.entries.read().unwrap().len()
     }
 
+    /// Get all rule sources (most recent first) for GET /_mx.
+    pub fn list_sources(&self) -> Vec<serde_json::Value> {
+        let entries = self.entries.read().unwrap();
+        entries.iter().rev().map(|e| e.rule.source.clone()).collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.read().unwrap().is_empty()
     }
@@ -127,6 +133,7 @@ mod tests {
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
             chaos: None,
+            source: serde_json::Value::Null,
         }
     }
 
@@ -140,6 +147,7 @@ mod tests {
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
             chaos: None,
+            source: serde_json::Value::Null,
         }
     }
 
