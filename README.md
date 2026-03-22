@@ -77,9 +77,9 @@ How the response is served — delivery shaping and operational constraints:
 ```yaml
 serve:
   # delivery shaping
-  span: 5s                              # send body over this timespan (auto-chunked)
-  span: {chunk: 1kb, delay: 100ms}      # explicit chunking
-  speed: 10kb/s                         # bandwidth cap
+  span: 5s                              # pacing: duration target (auto-chunked)
+  span: {chunk: 1kb, delay: 100ms}      # pacing: explicit chunking
+  span: {speed: 10kb/s}                 # pacing: bandwidth cap
   drop: 2kb                             # kill connection after N bytes
   drop: 1s                              # kill connection after N time
   first_byte: 2s                        # delay before first byte
@@ -98,8 +98,8 @@ Any scalar value supports jitter via ranges (`min..max` or `value..percent`):
 serve:
   span: 4s..6s                                  # random timespan
   span: {chunk: 512b..2kb, delay: 50ms..150ms}  # random chunk size and delay
-  speed: 10kb/s..20%                             # 8kb/s..12kb/s
-  drop: 1kb..4kb                                 # drop conn anywhere in that byte range
+  span: {speed: 10kb/s..20%}                    # random bandwidth 8kb/s..12kb/s
+  drop: 1kb..4kb                                # drop conn anywhere in that byte range
   first_byte: 1s..10%                            # 900ms..1.1s
 ```
 
@@ -113,7 +113,7 @@ and optional `reply`/`serve` overrides. Unspecified fields inherit from the rule
 chaos:
   - {p: 0.10, reply: {s: 500, b: "error"}}   # 0.1% error
   - {p: 0.05, serve: {drop: 1kb}}            # 0.05% drop
-  - {p: 7.00, serve: {speed: 100b/s}}        # 7% crawl
+  - {p: 7.00, serve: {span: {speed: 100b/s}}}        # 7% crawl
   # remaining 92.85% normal
 ```
 
@@ -131,7 +131,7 @@ echo '{p: localhost:9999/_mx, b: {
 echo '{p: localhost:9999/_mx, b: {
   match: {_: /download},
   reply: {s: 200, b: {rand!: {size: 10mb, seed: 42}}},
-  serve: {speed: 10kb/s, drop: 2kb}
+  serve: {span: {speed: 10kb/s}, drop: 2kb}
 }}' | yurl
 
 # Flaky auth endpoint
@@ -160,7 +160,7 @@ echo '{p: localhost:9999/_mx, b: {
   serve: {span: 500ms},
   chaos: [
     {p: 5, reply: {s: 500, b: "internal error"}},
-    {p: 3, serve: {speed: 100b/s}},
+    {p: 3, serve: {span: {speed: 100b/s}}},
     {p: 1, serve: {drop: 512b}}
   ]
 }}' | yurl
