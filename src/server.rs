@@ -159,15 +159,23 @@ async fn handle_replace_rules(
     }
 }
 
+fn plain_error(status: StatusCode, msg: impl Into<String>) -> Response {
+    Response::builder()
+        .status(status)
+        .header("content-type", "text/plain")
+        .body(Body::from(msg.into()))
+        .unwrap()
+}
+
 fn parse_body_as_rules(body: &Bytes) -> Result<Vec<crate::rule::Rule>, Response> {
     let body_str = std::str::from_utf8(body)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid UTF-8").into_response())?;
+        .map_err(|_| plain_error(StatusCode::BAD_REQUEST, "invalid UTF-8"))?;
 
     let val = yttp::parse(body_str)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("parse error: {e}")).into_response())?;
+        .map_err(|e| plain_error(StatusCode::BAD_REQUEST, format!("parse error: {e}")))?;
 
     parse_rules(&val)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("rule error: {e}")).into_response())
+        .map_err(|e| plain_error(StatusCode::BAD_REQUEST, format!("{e}")))
 }
 
 /// Catch-all handler for matched requests.

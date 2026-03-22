@@ -796,15 +796,31 @@ async fn post_appends_after_put() {
 // =========================================================================
 
 #[tokio::test]
-async fn malformed_rule_returns_400() {
+async fn error_response_is_text_plain() {
     let srv = TestServer::start().await;
-    let resp = srv.register("not valid yaml {{{").await;
+    let resp = srv.register("{reply: {s: 200}}").await;
     assert_eq!(resp.status(), 400);
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert_eq!(ct, "text/plain");
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("match"), "error should mention 'match': {body}");
 }
 
 #[tokio::test]
-async fn rule_missing_match_returns_400() {
+async fn error_with_suggestion() {
     let srv = TestServer::start().await;
-    let resp = srv.register("{reply: {s: 200}}").await;
+    let resp = srv.register_json(&serde_json::json!({
+        "match": {"g": "/test"},
+        "response": {"s": 200}
+    })).await;
+    assert_eq!(resp.status(), 400);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("reply"), "should suggest 'reply': {body}");
+}
+
+#[tokio::test]
+async fn malformed_rule_returns_400() {
+    let srv = TestServer::start().await;
+    let resp = srv.register("not valid yaml {{{").await;
     assert_eq!(resp.status(), 400);
 }
