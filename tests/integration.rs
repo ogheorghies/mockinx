@@ -295,7 +295,7 @@ async fn fail_injection_via_chaos() {
     srv.register_json(&serde_json::json!({
         "match": {"_": "/flaky"},
         "reply": {"s": 200, "b": "ok"},
-        "chaos": [{"p": 50, "reply": {"s": 500, "b": "error"}}]
+        "chaos": [{"p": "50%", "reply": {"s": 500, "b": "error"}}]
     })).await;
 
     let client = reqwest::Client::new();
@@ -451,7 +451,7 @@ async fn chaos_reply_override() {
         "match": {"_": "/chaos"},
         "reply": {"s": 200, "b": "ok"},
         "chaos": [
-            {"p": 50, "reply": {"s": 500, "b": "error"}}
+            {"p": "50%", "reply": {"s": 500, "b": "error"}}
         ]
     })).await;
 

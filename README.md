@@ -117,9 +117,9 @@ and `reply`/`serve` overrides. Unspecified fields inherit from the rule's defaul
 ```yaml
 # p is a percentage — unmatched remainder uses rule defaults
 chaos:
-  - {p: 0.10, reply: {s: 500, b: "error"}}   # 0.1% error
-  - {p: 0.05, serve: {drop: 1kb}}            # 0.05% drop after 1kb
-  - {p: 7.00, serve: {pace: 100b/s}}         # 7% crawl
+  - {p: 0.1%, reply: {s: 500, b: "error"}}    # 0.1% error
+  - {p: 0.05%, serve: {drop: 1kb}}           # 0.05% drop after 1kb
+  - {p: 7%, serve: {pace: 100b/s}}           # 7% crawl
   # remaining 92.85% normal
 ```
 
@@ -165,9 +165,9 @@ echo '{p: localhost:9999/_mx, b: {
   reply: {s: 200, b: {items: []}},
   serve: {pace: 500ms},
   chaos: [
-    {p: 5, reply: {s: 500, b: "internal error"}},
-    {p: 3, serve: {pace: 100b/s}},
-    {p: 1, serve: {drop: 512b}}
+    {p: 5%, reply: {s: 500, b: "internal error"}},
+    {p: 3%, serve: {pace: 100b/s}},
+    {p: 1%, serve: {drop: 512b}}
   ]
 }}' | yurl
 ```
