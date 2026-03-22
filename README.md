@@ -233,6 +233,19 @@ Rules are priority-ordered. Later rules take precedence.
 
 Load with: `mockinx -c rules.yaml`
 
+## Performance
+
+Zero overhead — mockinx matches raw axum throughput:
+
+```
+                       req/sec    latency
+raw TCP (no parsing)   194k       496µs
+axum (baseline)        191k       502µs
+mockinx (rule match)   190k       499µs
+```
+
+Run `./benches/run.sh` (requires [wrk](https://github.com/wg/wrk)).
+
 ## Tech
 
 Rust, axum, tokio. Single binary.
