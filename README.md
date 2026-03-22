@@ -124,6 +124,36 @@ chaos:
   # remaining 92.85% normal
 ```
 
+## Config file example
+
+```yaml
+# rules.yaml — load with: mockinx 9999 -c rules.yaml
+
+# simple static reply
+- match: {g: /health}
+  reply: {s: 200, b: ok}
+
+# CRUD resource
+- match: {_: /toys}
+  reply:
+    crud!:
+      data:
+        - {id: 1, name: Ball, price: 2.99}
+        - {id: 3, name: Owl, price: 5.99}
+
+# slow endpoint with concurrency limit
+- match: {g: /api/data}
+  reply: {s: 200, b: {"items": [1, 2, 3]}}
+  serve: {pace: 2s, conn: {max: 3, over: {s: 429}}}
+
+# flaky endpoint — 5% errors, 2% drops
+- match: {_: /api/submit}
+  reply: {s: 200, b: {status: accepted}}
+  chaos:
+    - {p: 5%, reply: {s: 500, b: "internal error"}}
+    - {p: 2%, serve: {drop: 512b}}
+```
+
 ## Full examples
 
 ```bash
