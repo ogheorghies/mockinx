@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::get;
 use axum::Router;
 use bytes::Bytes;
 use rand::SeedableRng;

@@ -4,6 +4,8 @@
 
 Codeless, easy config: all good · CRUD · parallel · slow · trickle · drops · errors
 
+Rules use [yttp](https://crates.io/crates/yttp) conventions for HTTP requests and responses.
+
 ```bash
 cargo install mockinx yurl    # yurl instead of curl
 mockinx                       # start server on port 9999

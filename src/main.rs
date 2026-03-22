@@ -5,7 +5,11 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
 #[derive(Parser)]
-#[command(name = "mockinx", about = "Programmable HTTP test server")]
+#[command(
+    name = "mockinx",
+    about = "Mock server with codeless config of pacing, drops, throttling, and chaos",
+    after_help = "Full docs: https://crates.io/crates/mockinx"
+)]
 struct Cli {
     /// Port to listen on
     #[arg(default_value = "9999")]
