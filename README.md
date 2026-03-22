@@ -77,12 +77,12 @@ How the response is served — delivery shaping and operational constraints:
 ```yaml
 serve:
   # delivery shaping
-  span: 5s                # send body over this timespan
-  speed: 10kb/s           # bandwidth cap
-  drop: 2kb               # kill connection after N bytes
-  drop: 1s                # kill connection after N time
-  first_byte: 2s          # delay before first byte
-  chunk: {size: 1kb, delay: 100ms}  # chunked streaming
+  span: 5s                              # send body over this timespan (auto-chunked)
+  span: {chunk: 1kb, delay: 100ms}      # explicit chunking
+  speed: 10kb/s                         # bandwidth cap
+  drop: 2kb                             # kill connection after N bytes
+  drop: 1s                              # kill connection after N time
+  first_byte: 2s                        # delay before first byte
 
   # operational constraints (connections, rate per second)
   conn: {max: 5, over: {s: 429, b: "too many"}}
@@ -96,11 +96,11 @@ Any scalar value supports jitter via ranges (`min..max` or `value..percent`):
 
 ```yaml
 serve:
-  span: 4s..6s                  # uniform random between 4s and 6s
-  speed: 10kb/s..20%            # 8kb/s..12kb/s
-  drop: 1kb..4kb                # drop conn anywhere in that byte range
-  first_byte: 1s..10%           # 900ms..1.1s
-  chunk: {size: 512b..2kb, delay: 50ms..150ms}
+  span: 4s..6s                                  # random timespan
+  span: {chunk: 512b..2kb, delay: 50ms..150ms}  # random chunk size and delay
+  speed: 10kb/s..20%                             # 8kb/s..12kb/s
+  drop: 1kb..4kb                                 # drop conn anywhere in that byte range
+  first_byte: 1s..10%                            # 900ms..1.1s
 ```
 
 ### chaos
