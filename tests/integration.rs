@@ -199,7 +199,7 @@ async fn span_delivers_progressively() {
     srv.register_json(&serde_json::json!({
         "match": {"g": "/progressive"},
         "reply": {"s": 200, "b": {"rand!": {"size": "10kb", "seed": 99}}},
-        "serve": {"span": "1s"}
+        "serve": {"pace": "1s"}
     })).await;
 
     let resp = reqwest::get(&srv.url("/progressive")).await.unwrap();
@@ -263,7 +263,7 @@ async fn concurrency_reject_via_serve() {
     srv.register_json(&serde_json::json!({
         "match": {"_": "/limited"},
         "reply": {"s": 200, "b": {"rand!": {"size": "10kb", "seed": 1}}},
-        "serve": {"span": "1s", "conn": {"max": 1, "over": {"s": 429, "b": "too many"}}}
+        "serve": {"pace": "1s", "conn": {"max": 1, "over": {"s": 429, "b": "too many"}}}
     })).await;
 
     let client = reqwest::Client::new();

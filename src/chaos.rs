@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn parse_chaos_both_overrides() {
         let entries = parse_chaos(&json!([
-            {"p": 3, "reply": {"s": 500}, "serve": {"speed": "100b/s"}}
+            {"p": 3, "reply": {"s": 500}, "serve": {"pace": "100b/s"}}
         ]))
         .unwrap();
         assert!(entries[0].reply.is_some());

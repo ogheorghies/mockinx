@@ -13,43 +13,83 @@ pub enum DropSpec {
     AfterTime(Range<Duration>),
 }
 
-/// Chunked delivery configuration.
+/// How to pace delivery.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChunkSpec {
-    pub size: Range<ByteSize>,
-    pub delay: Range<Duration>,
+pub enum PaceSpec {
+    /// Spread body over a target duration: `pace: 5s`
+    Duration(Range<Duration>),
+    /// Bandwidth cap: `pace: 10kb/s`
+    Speed(Range<Speed>),
+    /// Explicit chunking: `pace: 1kb@100ms`
+    Chunk {
+        size: Range<ByteSize>,
+        interval: Range<Duration>,
+    },
 }
 
 /// Delivery shaping specification (the delivery subset of `serve:`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DeliverySpec {
-    /// Spread body over this timespan (`span:`).
-    pub span: Option<Range<Duration>>,
-    /// Bandwidth cap (`speed:`).
-    pub speed: Option<Range<Speed>>,
+    /// Pacing: duration, speed, or explicit chunks (`pace:`).
+    pub pace: Option<PaceSpec>,
     /// Kill connection after N bytes or N time (`drop:`).
     pub drop: Option<DropSpec>,
     /// Delay before first byte (`first_byte:`).
     pub first_byte: Option<Range<Duration>>,
-    /// Chunked streaming (`chunk:`).
-    pub chunk: Option<ChunkSpec>,
 }
 
 /// Parse delivery-shaping fields from an object (subset of `serve:` keys).
 pub fn parse_delivery_fields(obj: &Map<String, Value>) -> Result<DeliverySpec, ParseError> {
-    let span = parse_optional_range(obj, "span", parse_duration_range)?;
-    let speed = parse_optional_range(obj, "speed", parse_speed_range)?;
+    let pace = parse_pace(obj)?;
     let drop = parse_drop(obj)?;
     let first_byte = parse_first_byte(obj)?;
-    let chunk = parse_chunk(obj)?;
 
     Ok(DeliverySpec {
-        span,
-        speed,
+        pace,
         drop,
         first_byte,
-        chunk,
     })
+}
+
+/// Parse the polymorphic `pace:` field.
+///
+/// Three string forms distinguished by sigils:
+/// - Contains `@` → chunk mode: `1kb@100ms`, `512b..2kb@50ms..150ms`
+/// - Contains `/s` → speed mode: `10kb/s`, `10kb/s..20%`
+/// - Otherwise → duration mode: `5s`, `4s..6s`
+fn parse_pace(obj: &Map<String, Value>) -> Result<Option<PaceSpec>, ParseError> {
+    let pace_val = match obj.get("pace") {
+        None => return Ok(None),
+        Some(v) => v,
+    };
+
+    let s = pace_val
+        .as_str()
+        .ok_or_else(|| ParseError("pace must be a string".into()))?;
+
+    Ok(Some(parse_pace_str(s)?))
+}
+
+/// Parse a pace string into a PaceSpec.
+pub fn parse_pace_str(s: &str) -> Result<PaceSpec, ParseError> {
+    let s = s.trim();
+
+    if let Some(at_pos) = s.find('@') {
+        // Chunk mode: "1kb@100ms" or "512b..2kb@50ms..150ms"
+        let size_str = &s[..at_pos];
+        let interval_str = &s[at_pos + 1..];
+        let size = parse_byte_size_range(size_str)?;
+        let interval = parse_duration_range(interval_str)?;
+        Ok(PaceSpec::Chunk { size, interval })
+    } else if s.contains("/s") {
+        // Speed mode: "10kb/s" or "10kb/s..20%"
+        let speed = parse_speed_range(s)?;
+        Ok(PaceSpec::Speed(speed))
+    } else {
+        // Duration mode: "5s" or "4s..6s"
+        let duration = parse_duration_range(s)?;
+        Ok(PaceSpec::Duration(duration))
+    }
 }
 
 fn parse_optional_range<T, F>(
@@ -91,7 +131,6 @@ fn parse_drop(obj: &Map<String, Value>) -> Result<Option<DropSpec>, ParseError> 
 }
 
 fn parse_drop_value(s: &str) -> Result<Option<DropSpec>, ParseError> {
-    // Try byte size first, then duration. The unit suffix disambiguates.
     if let Ok(range) = parse_byte_size_range(s) {
         Ok(Some(DropSpec::AfterBytes(range)))
     } else if let Ok(range) = parse_duration_range(s) {
@@ -126,31 +165,6 @@ fn parse_first_byte(obj: &Map<String, Value>) -> Result<Option<Range<Duration>>,
     Err(ParseError("first_byte must be a string or object".into()))
 }
 
-fn parse_chunk(obj: &Map<String, Value>) -> Result<Option<ChunkSpec>, ParseError> {
-    let chunk_val = match obj.get("chunk") {
-        None => return Ok(None),
-        Some(v) => v,
-    };
-
-    let chunk_obj = chunk_val
-        .as_object()
-        .ok_or_else(|| ParseError("chunk must be an object".into()))?;
-
-    let size_str = chunk_obj
-        .get("size")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ParseError("chunk requires 'size' string field".into()))?;
-    let size = parse_byte_size_range(size_str)?;
-
-    let delay_str = chunk_obj
-        .get("delay")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ParseError("chunk requires 'delay' string field".into()))?;
-    let delay = parse_duration_range(delay_str)?;
-
-    Ok(Some(ChunkSpec { size, delay }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,29 +175,103 @@ mod tests {
         parse_delivery_fields(v.as_object().unwrap())
     }
 
+    // --- PaceSpec parsing ---
+
     #[test]
-    fn parse_span() {
-        let spec = parse(json!({"span": "5s"})).unwrap();
-        assert_eq!(
-            spec.span,
-            Some(Range::Fixed(Duration(std::time::Duration::from_secs(5))))
-        );
+    fn pace_duration() {
+        let spec = parse(json!({"pace": "5s"})).unwrap();
+        match spec.pace.unwrap() {
+            PaceSpec::Duration(Range::Fixed(d)) => {
+                assert_eq!(d.as_std(), std::time::Duration::from_secs(5));
+            }
+            other => panic!("expected Duration, got {other:?}"),
+        }
     }
 
     #[test]
-    fn parse_speed() {
-        let spec = parse(json!({"speed": "10kb/s"})).unwrap();
-        assert_eq!(spec.speed, Some(Range::Fixed(Speed(10240))));
+    fn pace_speed() {
+        let spec = parse(json!({"pace": "10kb/s"})).unwrap();
+        match spec.pace.unwrap() {
+            PaceSpec::Speed(Range::Fixed(s)) => {
+                assert_eq!(s.bytes_per_sec(), 10240);
+            }
+            other => panic!("expected Speed, got {other:?}"),
+        }
     }
 
     #[test]
-    fn parse_drop_flat_bytes() {
+    fn pace_chunk() {
+        let spec = parse(json!({"pace": "1kb@100ms"})).unwrap();
+        match spec.pace.unwrap() {
+            PaceSpec::Chunk { size, interval } => {
+                assert_eq!(size, Range::Fixed(ByteSize(1024)));
+                assert_eq!(
+                    interval,
+                    Range::Fixed(Duration(std::time::Duration::from_millis(100)))
+                );
+            }
+            other => panic!("expected Chunk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pace_duration_range() {
+        let spec = parse(json!({"pace": "4s..6s"})).unwrap();
+        match spec.pace.unwrap() {
+            PaceSpec::Duration(Range::MinMax(min, max)) => {
+                assert_eq!(min.as_millis(), 4000);
+                assert_eq!(max.as_millis(), 6000);
+            }
+            other => panic!("expected Duration MinMax, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pace_speed_percentage() {
+        let spec = parse(json!({"pace": "10kb/s..20%"})).unwrap();
+        match spec.pace.unwrap() {
+            PaceSpec::Speed(Range::MinMax(min, max)) => {
+                assert_eq!(min.bytes_per_sec(), 8192);
+                assert_eq!(max.bytes_per_sec(), 12288);
+            }
+            other => panic!("expected Speed MinMax, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pace_chunk_ranges() {
+        let spec = parse(json!({"pace": "512b..2kb@50ms..150ms"})).unwrap();
+        match spec.pace.unwrap() {
+            PaceSpec::Chunk { size, interval } => {
+                match size {
+                    Range::MinMax(min, max) => {
+                        assert_eq!(min.bytes(), 512);
+                        assert_eq!(max.bytes(), 2048);
+                    }
+                    _ => panic!("expected MinMax size"),
+                }
+                match interval {
+                    Range::MinMax(min, max) => {
+                        assert_eq!(min.as_millis(), 50);
+                        assert_eq!(max.as_millis(), 150);
+                    }
+                    _ => panic!("expected MinMax interval"),
+                }
+            }
+            other => panic!("expected Chunk, got {other:?}"),
+        }
+    }
+
+    // --- Drop ---
+
+    #[test]
+    fn drop_flat_bytes() {
         let spec = parse(json!({"drop": "2kb"})).unwrap();
         assert_eq!(spec.drop, Some(DropSpec::AfterBytes(Range::Fixed(ByteSize(2048)))));
     }
 
     #[test]
-    fn parse_drop_flat_time() {
+    fn drop_flat_time() {
         let spec = parse(json!({"drop": "1s"})).unwrap();
         assert_eq!(
             spec.drop,
@@ -194,85 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_drop_legacy_object() {
-        let spec = parse(json!({"drop": {"after": "2kb"}})).unwrap();
-        assert_eq!(spec.drop, Some(DropSpec::AfterBytes(Range::Fixed(ByteSize(2048)))));
-    }
-
-    #[test]
-    fn parse_first_byte_flat() {
-        let spec = parse(json!({"first_byte": "2s"})).unwrap();
-        assert_eq!(
-            spec.first_byte,
-            Some(Range::Fixed(Duration(std::time::Duration::from_secs(2))))
-        );
-    }
-
-    #[test]
-    fn parse_first_byte_legacy_object() {
-        let spec = parse(json!({"first_byte": {"delay": "2s"}})).unwrap();
-        assert_eq!(
-            spec.first_byte,
-            Some(Range::Fixed(Duration(std::time::Duration::from_secs(2))))
-        );
-    }
-
-    #[test]
-    fn parse_chunk_spec() {
-        let spec = parse(json!({"chunk": {"size": "1kb", "delay": "100ms"}})).unwrap();
-        let chunk = spec.chunk.unwrap();
-        assert_eq!(chunk.size, Range::Fixed(ByteSize(1024)));
-        assert_eq!(
-            chunk.delay,
-            Range::Fixed(Duration(std::time::Duration::from_millis(100)))
-        );
-    }
-
-    #[test]
-    fn parse_range_span() {
-        let spec = parse(json!({"span": "4s..6s"})).unwrap();
-        match spec.span.unwrap() {
-            Range::MinMax(min, max) => {
-                assert_eq!(min.as_millis(), 4000);
-                assert_eq!(max.as_millis(), 6000);
-            }
-            _ => panic!("expected MinMax"),
-        }
-    }
-
-    #[test]
-    fn parse_range_speed_percentage() {
-        let spec = parse(json!({"speed": "10kb/s..20%"})).unwrap();
-        match spec.speed.unwrap() {
-            Range::MinMax(min, max) => {
-                assert_eq!(min.bytes_per_sec(), 8192);
-                assert_eq!(max.bytes_per_sec(), 12288);
-            }
-            _ => panic!("expected MinMax"),
-        }
-    }
-
-    #[test]
-    fn parse_empty_default() {
-        let spec = parse(json!({})).unwrap();
-        assert_eq!(spec, DeliverySpec::default());
-    }
-
-    #[test]
-    fn parse_multiple_fields() {
-        let spec = parse(json!({
-            "first_byte": "2s",
-            "span": "5s",
-            "drop": "2kb"
-        }))
-        .unwrap();
-        assert!(spec.first_byte.is_some());
-        assert!(spec.span.is_some());
-        assert!(spec.drop.is_some());
-    }
-
-    #[test]
-    fn parse_drop_with_range() {
+    fn drop_range() {
         let spec = parse(json!({"drop": "1kb..4kb"})).unwrap();
         match spec.drop.unwrap() {
             DropSpec::AfterBytes(Range::MinMax(min, max)) => {
@@ -283,8 +293,19 @@ mod tests {
         }
     }
 
+    // --- First byte ---
+
     #[test]
-    fn parse_first_byte_with_range() {
+    fn first_byte_flat() {
+        let spec = parse(json!({"first_byte": "2s"})).unwrap();
+        assert_eq!(
+            spec.first_byte,
+            Some(Range::Fixed(Duration(std::time::Duration::from_secs(2))))
+        );
+    }
+
+    #[test]
+    fn first_byte_range() {
         let spec = parse(json!({"first_byte": "1s..10%"})).unwrap();
         match spec.first_byte.unwrap() {
             Range::MinMax(min, max) => {
@@ -295,36 +316,36 @@ mod tests {
         }
     }
 
+    // --- Empty / multiple ---
+
     #[test]
-    fn parse_chunk_with_ranges() {
+    fn empty_default() {
+        let spec = parse(json!({})).unwrap();
+        assert_eq!(spec, DeliverySpec::default());
+    }
+
+    #[test]
+    fn multiple_fields() {
         let spec = parse(json!({
-            "chunk": {"size": "512b..2kb", "delay": "50ms..150ms"}
+            "first_byte": "2s",
+            "pace": "5s",
+            "drop": "2kb"
         }))
         .unwrap();
-        let chunk = spec.chunk.unwrap();
-        match chunk.size {
-            Range::MinMax(min, max) => {
-                assert_eq!(min.bytes(), 512);
-                assert_eq!(max.bytes(), 2048);
-            }
-            _ => panic!("expected MinMax size"),
-        }
+        assert!(spec.first_byte.is_some());
+        assert!(spec.pace.is_some());
+        assert!(spec.drop.is_some());
     }
 
     // --- Error cases ---
 
     #[test]
-    fn parse_error_drop_invalid() {
+    fn pace_invalid() {
+        assert!(parse(json!({"pace": "xyz"})).is_err());
+    }
+
+    #[test]
+    fn drop_invalid() {
         assert!(parse(json!({"drop": "xyz"})).is_err());
-    }
-
-    #[test]
-    fn parse_error_chunk_missing_size() {
-        assert!(parse(json!({"chunk": {"delay": "100ms"}})).is_err());
-    }
-
-    #[test]
-    fn parse_error_chunk_missing_delay() {
-        assert!(parse(json!({"chunk": {"size": "1kb"}})).is_err());
     }
 }

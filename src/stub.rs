@@ -162,12 +162,12 @@ mod tests {
         let stub = parse_stub(&json!({
             "match": {"g": "/api/data"},
             "reply": {"s": 200, "b": {"items": [1, 2, 3]}},
-            "serve": {"first_byte": "2s", "span": "5s", "conn": {"max": 5, "over": {"block": "3s", "then": {"s": 429}}}}
+            "serve": {"first_byte": "2s", "pace": "5s", "conn": {"max": 5, "over": {"block": "3s", "then": {"s": 429}}}}
         }))
         .unwrap();
         assert!(stub.reply.is_some());
         assert!(stub.delivery.first_byte.is_some());
-        assert!(stub.delivery.span.is_some());
+        assert!(stub.delivery.pace.is_some());
         assert!(stub.behavior.concurrency.is_some());
     }
 

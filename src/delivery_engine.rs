@@ -1,4 +1,4 @@
-use crate::delivery::{DeliverySpec, DropSpec};
+use crate::delivery::{DeliverySpec, DropSpec, PaceSpec};
 use bytes::Bytes;
 use rand::Rng;
 use std::pin::Pin;
@@ -31,10 +31,9 @@ pub struct DeliveryStream {
 }
 
 const DEFAULT_CHUNK_SIZE: usize = 8192;
+const MIN_PACE_CHUNKS: usize = 10;
 
 /// Resolve a delivery spec into a stream, sampling ranges from the provided RNG.
-///
-/// For `pick` specs, selects one profile by weighted random.
 pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> DeliveryStream {
     let first_byte_delay = spec
         .first_byte
@@ -54,40 +53,42 @@ pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> Delive
         _ => None,
     };
 
-    // Determine chunk size and delay
-    let (chunk_size, chunk_delay) = if let Some(ref chunk) = spec.chunk {
-        let size = chunk.size.sample(rng).bytes() as usize;
-        let delay = chunk.delay.sample(rng).as_std();
-        (size.max(1), Some(delay))
-    } else if let Some(ref span_range) = spec.span {
-        let duration = span_range.sample(rng).as_std();
-        // Target at least 10 chunks for smooth progressive delivery
-        let min_chunks = 10usize;
-        let chunk_size = (body.len() / min_chunks).max(1).min(DEFAULT_CHUNK_SIZE);
-        let num_chunks = (body.len() + chunk_size - 1) / chunk_size.max(1);
-        // Distribute delay across inter-chunk gaps (num_chunks - 1 gaps)
-        let delay = if num_chunks > 1 {
-            duration / (num_chunks - 1) as u32
-        } else {
-            duration
-        };
-        (chunk_size, Some(delay))
-    } else if let Some(ref speed_range) = spec.speed {
-        let bps = speed_range.sample(rng).bytes_per_sec();
-        if bps == 0 {
-            // Zero speed: deliver all at once (avoid div-by-zero)
-            (body.len().max(1), None)
-        } else {
-            let chunk_size = (bps as usize / 10).max(1); // ~100ms chunks
-            let delay_secs = chunk_size as f64 / bps as f64;
-            (
-                chunk_size,
-                Some(std::time::Duration::from_secs_f64(delay_secs)),
-            )
+    // Determine chunk size and delay from PaceSpec
+    let (chunk_size, chunk_delay) = match &spec.pace {
+        Some(PaceSpec::Chunk { size, interval }) => {
+            let s = size.sample(rng).bytes() as usize;
+            let d = interval.sample(rng).as_std();
+            (s.max(1), Some(d))
         }
-    } else {
-        // No shaping: deliver all at once
-        (body.len().max(1), None)
+        Some(PaceSpec::Duration(range)) => {
+            let duration = range.sample(rng).as_std();
+            // Target at least MIN_PACE_CHUNKS for smooth progressive delivery
+            let chunk_size = (body.len() / MIN_PACE_CHUNKS).max(1).min(DEFAULT_CHUNK_SIZE);
+            let num_chunks = (body.len() + chunk_size - 1) / chunk_size.max(1);
+            let delay = if num_chunks > 1 {
+                duration / (num_chunks - 1) as u32
+            } else {
+                duration
+            };
+            (chunk_size, Some(delay))
+        }
+        Some(PaceSpec::Speed(range)) => {
+            let bps = range.sample(rng).bytes_per_sec();
+            if bps == 0 {
+                (body.len().max(1), None)
+            } else {
+                let chunk_size = (bps as usize / 10).max(1); // ~100ms chunks
+                let delay_secs = chunk_size as f64 / bps as f64;
+                (
+                    chunk_size,
+                    Some(std::time::Duration::from_secs_f64(delay_secs)),
+                )
+            }
+        }
+        None => {
+            // No pacing: deliver all at once
+            (body.len().max(1), None)
+        }
     };
 
     DeliveryStream {
@@ -222,12 +223,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chunking_correct_count_and_sizes() {
+    async fn pace_chunk() {
         let body = vec![0u8; 1000];
         let spec = DeliverySpec {
-            chunk: Some(ChunkSpec {
+            pace: Some(PaceSpec::Chunk {
                 size: Range::Fixed(ByteSize(300)),
-                delay: Range::Fixed(Duration(std::time::Duration::from_millis(1))),
+                interval: Range::Fixed(Duration(std::time::Duration::from_millis(1))),
             }),
             ..Default::default()
         };
@@ -239,10 +240,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn span_spreads_body() {
+    async fn pace_duration() {
         let body = vec![0u8; 10000];
         let spec = DeliverySpec {
-            span: Some(Range::Fixed(Duration(std::time::Duration::from_millis(500)))),
+            pace: Some(PaceSpec::Duration(Range::Fixed(Duration(
+                std::time::Duration::from_millis(500),
+            )))),
             ..Default::default()
         };
         let start = Instant::now();
@@ -262,11 +265,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn speed_throttle() {
+    async fn pace_speed() {
         // 10KB at 20KB/s should take ~500ms
         let body = vec![0u8; 10240];
         let spec = DeliverySpec {
-            speed: Some(Range::Fixed(Speed(20480))),
+            pace: Some(PaceSpec::Speed(Range::Fixed(Speed(20480)))),
             ..Default::default()
         };
         let start = Instant::now();
@@ -302,9 +305,9 @@ mod tests {
     async fn drop_after_time() {
         let body = vec![0u8; 100000];
         let spec = DeliverySpec {
-            chunk: Some(ChunkSpec {
+            pace: Some(PaceSpec::Chunk {
                 size: Range::Fixed(ByteSize(100)),
-                delay: Range::Fixed(Duration(std::time::Duration::from_millis(50))),
+                interval: Range::Fixed(Duration(std::time::Duration::from_millis(50))),
             }),
             drop: Some(DropSpec::AfterTime(Range::Fixed(Duration(
                 std::time::Duration::from_millis(200),
@@ -316,7 +319,6 @@ mod tests {
         let chunks: Vec<Bytes> = stream.map(|r| r.unwrap()).collect().await;
         let elapsed = start.elapsed();
         let total: usize = chunks.iter().map(|c| c.len()).sum();
-        // Should have delivered some but not all
         assert!(total < 100000, "should have dropped before full body");
         assert!(total > 0, "should have delivered something");
         assert!(
@@ -326,13 +328,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn first_byte_delay_plus_chunking() {
+    async fn first_byte_plus_pace_chunk() {
         let body = vec![0u8; 300];
         let spec = DeliverySpec {
             first_byte: Some(Range::Fixed(Duration(std::time::Duration::from_millis(100)))),
-            chunk: Some(ChunkSpec {
+            pace: Some(PaceSpec::Chunk {
                 size: Range::Fixed(ByteSize(100)),
-                delay: Range::Fixed(Duration(std::time::Duration::from_millis(50))),
+                interval: Range::Fixed(Duration(std::time::Duration::from_millis(50))),
             }),
             ..Default::default()
         };
@@ -341,7 +343,6 @@ mod tests {
         let chunks: Vec<Bytes> = stream.map(|r| r.unwrap()).collect().await;
         let elapsed = start.elapsed();
         assert_eq!(chunks.len(), 3);
-        // first_byte (100ms) + 2 inter-chunk delays (100ms) = ~200ms minimum
         assert!(
             elapsed >= std::time::Duration::from_millis(180),
             "elapsed {elapsed:?} too short"
