@@ -7,6 +7,7 @@ use std::sync::RwLock;
 pub struct CrudStore {
     state: RwLock<CrudState>,
     id_field: String,
+    id_strategy: String,
 }
 
 struct CrudState {
@@ -40,6 +41,7 @@ impl CrudStore {
                 next_id: max_id + 1,
             }),
             id_field,
+            id_strategy: spec.id.new.clone(),
         }
     }
 
@@ -59,11 +61,23 @@ impl CrudStore {
         }
     }
 
-    /// Create a new item, assigning an auto-ID.
+    /// Create a new item, assigning an ID based on the configured strategy.
     pub fn create(&self, body: Value) -> CrudResponse {
         let mut state = self.state.write().unwrap();
-        let id = state.next_id;
-        state.next_id += 1;
+
+        // Generate ID based on strategy
+        let (id_value, id_key) = match self.id_strategy.as_str() {
+            "uuid" => {
+                let u = uuid::Uuid::new_v4().to_string();
+                (json!(u), u)
+            }
+            _ => {
+                // "inc" (default)
+                let id = state.next_id;
+                state.next_id += 1;
+                (json!(id), id.to_string())
+            }
+        };
 
         let mut item = match body {
             Value::Object(m) => Value::Object(m),
@@ -74,12 +88,10 @@ impl CrudStore {
             }
         };
 
-        // Assign ID
         if let Value::Object(ref mut m) = item {
-            m.insert(self.id_field.clone(), json!(id));
+            m.insert(self.id_field.clone(), id_value);
         }
 
-        let id_key = id.to_string();
         state.items.insert(id_key, item.clone());
         (201, item)
     }
@@ -249,7 +261,7 @@ mod tests {
     // --- Create ---
 
     #[test]
-    fn create_assigns_auto_id() {
+    fn create_assigns_inc_id() {
         let store = seeded_store();
         let (status, body) = store.create(json!({"name": "Car", "price": 1.50}));
         assert_eq!(status, 201);
@@ -338,7 +350,7 @@ mod tests {
         let store = CrudStore::new(&CrudSpec {
             id: CrudIdSpec {
                 name: "sku".into(),
-                new: "auto".into(),
+                new: "inc".into(),
             },
             seed: vec![json!({"sku": 100, "name": "Widget"})],
         });
@@ -348,6 +360,34 @@ mod tests {
 
         let (_, created) = store.create(json!({"name": "Gadget"}));
         assert_eq!(created["sku"], 101);
+    }
+
+    // --- UUID strategy ---
+
+    #[test]
+    fn uuid_id_strategy() {
+        let store = CrudStore::new(&CrudSpec {
+            id: CrudIdSpec {
+                name: "uid".into(),
+                new: "uuid".into(),
+            },
+            seed: vec![],
+        });
+        let (status, body) = store.create(json!({"name": "Widget"}));
+        assert_eq!(status, 201);
+        let uid = body["uid"].as_str().unwrap();
+        assert_eq!(uid.len(), 36, "UUID should be 36 chars: {uid}");
+        assert!(uid.contains('-'), "UUID should contain dashes: {uid}");
+
+        // Second create gets a different UUID
+        let (_, body2) = store.create(json!({"name": "Gadget"}));
+        let uid2 = body2["uid"].as_str().unwrap();
+        assert_ne!(uid, uid2);
+
+        // Can retrieve by UUID
+        let (status, fetched) = store.get(uid);
+        assert_eq!(status, 200);
+        assert_eq!(fetched["name"], "Widget");
     }
 
     // --- Extract ID ---

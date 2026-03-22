@@ -58,7 +58,7 @@ pub struct SequenceSpec {
 pub struct CrudIdSpec {
     /// Name of the ID field (default: "id").
     pub name: String,
-    /// ID generation strategy (default: "auto").
+    /// ID generation strategy (default: "inc").
     pub new: String,
 }
 
@@ -66,7 +66,7 @@ impl Default for CrudIdSpec {
     fn default() -> Self {
         CrudIdSpec {
             name: "id".into(),
-            new: "auto".into(),
+            new: "inc".into(),
         }
     }
 }
@@ -302,7 +302,7 @@ pub fn parse_crud_spec(crud_obj: &Map<String, Value>) -> Result<CrudSpec, ParseE
             let new = id_obj
                 .get("new")
                 .and_then(|v| v.as_str())
-                .unwrap_or("auto")
+                .unwrap_or("inc")
                 .to_string();
 
             CrudIdSpec { name, new }
@@ -533,7 +533,7 @@ mod tests {
         .unwrap();
         let crud = spec.crud.unwrap();
         assert_eq!(crud.id.name, "id");
-        assert_eq!(crud.id.new, "auto");
+        assert_eq!(crud.id.new, "inc");
         assert_eq!(crud.seed.len(), 1);
     }
 
@@ -541,7 +541,7 @@ mod tests {
     fn parse_crud_custom_id() {
         let spec = parse_behavior(&json!({
             "crud": {
-                "id": {"name": "sku", "new": "auto"},
+                "id": {"name": "sku", "new": "inc"},
                 "seed": []
             }
         }))
