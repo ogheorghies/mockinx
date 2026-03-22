@@ -1,0 +1,26 @@
+# rules.yaml — the config file example from README
+
+# simple static reply
+- match: {g: /health}
+  reply: {s: 200, b: ok}
+
+# CRUD resource
+- match: {_: /toys}
+  reply:
+    "crud!":
+      data:
+        - {id: 1, name: Ball, price: 2.99}
+        - {id: 3, name: Owl, price: 5.99}
+
+# slow endpoint with concurrency limit
+- match: {g: /api/data}
+  reply: {s: 200, b: {"items": [1, 2, 3]}}
+  serve: {pace: 500ms, conn: {max: 2, over: {s: 429}}}
+
+# /toys/6 is flaky — overrides the CRUD rule (later = higher priority)
+- match: {g: /toys/6}
+  reply: {s: 200, b: {id: 6, name: Dice, price: 0.99}}
+  serve: {pace: 300ms}
+  chaos:
+    - {"p": "30%", reply: {s: 500, b: "oops"}}
+    - {"p": "10%", serve: {drop: 10b}}

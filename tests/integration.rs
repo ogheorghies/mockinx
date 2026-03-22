@@ -507,6 +507,188 @@ async fn explicit_content_type_overrides_inference() {
 }
 
 // =========================================================================
+// Config file (README example): tests/fixtures/rules.yaml
+// =========================================================================
+
+/// Start a server with the README example config file loaded.
+async fn start_with_fixture() -> TestServer {
+    let state = AppState::new();
+
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/rules.yaml");
+    let content = std::fs::read_to_string(&fixture).unwrap();
+    let val = yttp::parse(&content).unwrap();
+    let rules = mockinx::rule::parse_rules(&val).unwrap();
+    state.register_rules(rules);
+
+    let app = build_router(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    TestServer {
+        base_url: format!("http://127.0.0.1:{}", addr.port()),
+        _handle: handle,
+        state,
+    }
+}
+
+#[tokio::test]
+async fn fixture_health_check() {
+    let srv = start_with_fixture().await;
+    let resp = reqwest::get(&srv.url("/health")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn fixture_crud_list() {
+    let srv = start_with_fixture().await;
+    let resp = reqwest::get(&srv.url("/toys")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body.as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["name"], "Ball");
+    assert_eq!(items[1]["name"], "Owl");
+}
+
+#[tokio::test]
+async fn fixture_crud_get_by_id() {
+    let srv = start_with_fixture().await;
+    let resp = reqwest::get(&srv.url("/toys/1")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["name"], "Ball");
+    assert_eq!(body["price"], 2.99);
+}
+
+#[tokio::test]
+async fn fixture_crud_create() {
+    let srv = start_with_fixture().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&srv.url("/toys"))
+        .json(&serde_json::json!({"name": "Car", "price": 1.50}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["name"], "Car");
+    assert_eq!(body["id"], 4); // next after max id 3
+}
+
+#[tokio::test]
+async fn fixture_slow_endpoint_paced() {
+    let srv = start_with_fixture().await;
+    let start = std::time::Instant::now();
+    let resp = reqwest::get(&srv.url("/api/data")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let _body = resp.text().await.unwrap();
+    let elapsed = start.elapsed();
+    // pace: 500ms — body delivery should take at least ~400ms
+    assert!(
+        elapsed >= std::time::Duration::from_millis(350),
+        "pace too fast: {elapsed:?}"
+    );
+}
+
+#[tokio::test]
+async fn fixture_concurrency_limit() {
+    let srv = start_with_fixture().await;
+    let client = reqwest::Client::new();
+    let url = srv.url("/api/data");
+
+    // Start 2 requests (at the conn limit of 2)
+    let h1 = tokio::spawn({
+        let c = client.clone();
+        let u = url.clone();
+        async move {
+            let r = c.get(&u).send().await.unwrap();
+            let s = r.status().as_u16();
+            let _ = r.bytes().await;
+            s
+        }
+    });
+    let h2 = tokio::spawn({
+        let c = client.clone();
+        let u = url.clone();
+        async move {
+            let r = c.get(&u).send().await.unwrap();
+            let s = r.status().as_u16();
+            let _ = r.bytes().await;
+            s
+        }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // 3rd should be rejected (max: 2)
+    let resp3 = client.get(&url).send().await.unwrap();
+    assert_eq!(resp3.status(), 429);
+
+    assert_eq!(h1.await.unwrap(), 200);
+    assert_eq!(h2.await.unwrap(), 200);
+}
+
+#[tokio::test]
+async fn fixture_toys_6_overrides_crud() {
+    let srv = start_with_fixture().await;
+
+    // /toys/6 is served by the specific flaky rule, not CRUD
+    let resp = reqwest::get(&srv.url("/toys/6")).await.unwrap();
+    // Could be 200 or 500 (30% chaos), but the body on success is Dice
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap();
+    if status == 200 {
+        let val: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(val["name"], "Dice");
+    }
+    // Other toy IDs still served by CRUD
+    let resp = reqwest::get(&srv.url("/toys/1")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["name"], "Ball");
+}
+
+#[tokio::test]
+async fn fixture_toys_6_chaos_distribution() {
+    let srv = start_with_fixture().await;
+    let client = reqwest::Client::new();
+
+    let mut ok_count = 0u32;
+    let mut err_count = 0u32;
+
+    for _ in 0..100 {
+        let resp = client.get(&srv.url("/toys/6")).send().await.unwrap();
+        if resp.status() == 200 {
+            ok_count += 1;
+        } else {
+            err_count += 1;
+        }
+    }
+
+    // 30% error + 10% drop ≈ ~40% failures, ~60% success
+    assert!(ok_count > 30, "too few successes: {ok_count}");
+    assert!(err_count > 15, "too few failures: {err_count}");
+}
+
+#[tokio::test]
+async fn fixture_unmatched_returns_404() {
+    let srv = start_with_fixture().await;
+    let resp = reqwest::get(&srv.url("/nonexistent")).await.unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+// =========================================================================
 // Malformed input
 // =========================================================================
 
