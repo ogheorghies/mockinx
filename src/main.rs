@@ -54,6 +54,10 @@ fn load_config(path: &str, state: &AppState) -> Result<usize, String> {
     let val = yttp::parse(&content).map_err(|e| format!("parse error: {e}"))?;
     let rules = parse_rules(&val).map_err(|e| format!("rule error: {e}"))?;
     let count = rules.len();
+    let warnings = mockinx::validate::validate_rules(&rules);
+    for w in &warnings {
+        eprintln!("{w}");
+    }
     state.register_rules(rules);
     Ok(count)
 }

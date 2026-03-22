@@ -4,6 +4,7 @@ pub mod reply;
 pub mod serve;
 pub mod chaos;
 pub mod suggest;
+pub mod validate;
 pub mod rule;
 pub mod store;
 pub mod server;

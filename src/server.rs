@@ -126,8 +126,13 @@ async fn handle_append_rules(
     match parse_body_as_rules(&body) {
         Ok(rules) => {
             let count = rules.len();
+            let warnings = crate::validate::validate_rules(&rules);
             state.register_rules(rules);
-            (StatusCode::CREATED, format!("{count} rule(s) added")).into_response()
+            let mut msg = format!("{count} rule(s) added");
+            for w in &warnings {
+                msg.push_str(&format!("\n{w}"));
+            }
+            (StatusCode::CREATED, msg).into_response()
         }
         Err(resp) => resp,
     }
@@ -142,8 +147,13 @@ async fn handle_replace_rules(
         Ok(rules) => {
             state.clear_all();
             let count = rules.len();
+            let warnings = crate::validate::validate_rules(&rules);
             state.register_rules(rules);
-            (StatusCode::OK, format!("{count} rule(s) loaded")).into_response()
+            let mut msg = format!("{count} rule(s) loaded");
+            for w in &warnings {
+                msg.push_str(&format!("\n{w}"));
+            }
+            (StatusCode::OK, msg).into_response()
         }
         Err(resp) => resp,
     }
