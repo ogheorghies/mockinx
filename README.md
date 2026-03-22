@@ -1,8 +1,8 @@
 # mockinx - compliant web server, broken on purpose
 
-\[MO-keen-x\]: (1) set reply rules (2) get back exactly that.
+\[MO-keen-x\]: `match` + `reply` + `serve` + `chaos` = what you get back.
 
-all good * CRUD * slowness * drops * throttling * trickling * chaos
+Codeless, easy config: all good · CRUD · parallel · slow · trickle · drops · errors
 
 ```bash
 cargo install mockinx yurl    # yurl instead of curl
@@ -67,7 +67,8 @@ reply:
 
 # crud — in-memory REST resource
 reply: {crud!: {seed: [{id: 1, name: Ball}, {id: 3, name: Owl}]}}
-reply: {crud!: {id: {name: sku, new: auto}}}
+reply: {crud!: {id: {name: sku, new: inc}}}     # auto-increment IDs
+reply: {crud!: {id: {name: uid, new: uuid}}}    # UUID IDs
 ```
 
 ### serve
