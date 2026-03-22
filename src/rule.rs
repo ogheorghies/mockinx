@@ -26,26 +26,26 @@ pub struct Rule {
 pub fn parse_rule(v: &Value) -> Result<Rule, ParseError> {
     let obj = v
         .as_object()
-        .ok_or_else(|| ParseError("rule must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("rule must be an object"))?;
 
     let match_val = obj
         .get("match")
-        .ok_or_else(|| ParseError("rule requires 'match' field".into()))?;
-    let match_rule = parse_match_rule(match_val)?;
+        .ok_or_else(|| ParseError::new("rule requires 'match' field"))?;
+    let match_rule = parse_match_rule(match_val).map_err(|e| e.in_field("match"))?;
 
     let reply_val = obj
         .get("reply")
-        .ok_or_else(|| ParseError("rule requires 'reply' field".into()))?;
-    let reply = parse_reply_strategy(reply_val)?;
+        .ok_or_else(|| ParseError::new("missing 'reply' — every rule needs a reply (static, sequence, or crud!)"))?;
+    let reply = parse_reply_strategy(reply_val).map_err(|e| e.in_field("reply"))?;
 
     let (delivery, behavior) = match obj.get("serve") {
-        Some(serve_val) => parse_serve(serve_val)?,
+        Some(serve_val) => parse_serve(serve_val).map_err(|e| e.in_field("serve"))?,
         None => (DeliverySpec::default(), BehaviorSpec::default()),
     };
 
     let chaos = match obj.get("chaos") {
         None => None,
-        Some(v) => Some(parse_chaos(v)?),
+        Some(v) => Some(parse_chaos(v).map_err(|e| e.in_field("chaos"))?),
     };
 
     Ok(Rule {
@@ -68,13 +68,13 @@ pub fn parse_rules(v: &Value) -> Result<Vec<Rule>, ParseError> {
             for (i, item) in arr.iter().enumerate() {
                 rules.push(
                     parse_rule(item)
-                        .map_err(|e| ParseError(format!("rule[{i}]: {e}")))?,
+                        .map_err(|e| e.in_index("rule", i))?,
                 );
             }
             Ok(rules)
         }
         Value::Object(_) => Ok(vec![parse_rule(v)?]),
-        _ => Err(ParseError("rules must be an object or array".into())),
+        _ => Err(ParseError::new("rules must be an object or array")),
     }
 }
 
@@ -247,7 +247,8 @@ mod tests {
             {"match": {"g": "/bad"}}
         ]));
         let err = result.unwrap_err();
-        assert!(err.0.contains("rule[1]"), "error: {}", err.0);
+        let msg = format!("{err}");
+        assert!(msg.contains("rule[1]"), "error: {msg}");
     }
 
     #[test]

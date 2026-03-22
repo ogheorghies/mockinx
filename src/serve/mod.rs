@@ -20,7 +20,7 @@ use serde_json::Value;
 pub fn parse_serve(v: &Value) -> Result<(DeliverySpec, BehaviorSpec), ParseError> {
     let obj = v
         .as_object()
-        .ok_or_else(|| ParseError("serve must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("serve must be an object"))?;
 
     let delivery = parse_delivery_fields(obj)?;
     let behavior = parse_behavior(v)?;

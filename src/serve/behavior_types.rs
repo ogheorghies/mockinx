@@ -67,7 +67,7 @@ pub struct BehaviorSpec {
 pub fn parse_behavior(v: &Value) -> Result<BehaviorSpec, ParseError> {
     let obj = v
         .as_object()
-        .ok_or_else(|| ParseError("behavior must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("behavior must be an object"))?;
 
     let concurrency = parse_conn(obj)?;
     let rate_limit = parse_rps(obj)?;
@@ -88,15 +88,15 @@ fn parse_conn(obj: &Map<String, Value>) -> Result<Option<ConcurrencySpec>, Parse
 
     let c_obj = val
         .as_object()
-        .ok_or_else(|| ParseError("conn must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("conn must be an object"))?;
 
     let max = c_obj
         .get("max")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| ParseError("conn requires 'max' as a positive integer".into()))?;
+        .ok_or_else(|| ParseError::new("conn requires 'max' as a positive integer"))?;
 
     if max == 0 {
-        return Err(ParseError("conn max must be > 0".into()));
+        return Err(ParseError::new("conn max must be > 0"));
     }
 
     let over = parse_overflow_action(c_obj)?;
@@ -110,14 +110,14 @@ fn parse_conn(obj: &Map<String, Value>) -> Result<Option<ConcurrencySpec>, Parse
 fn parse_overflow_action(obj: &Map<String, Value>) -> Result<OverflowAction, ParseError> {
     let over_val = obj
         .get("over")
-        .ok_or_else(|| ParseError("concurrency requires 'over' field".into()))?;
+        .ok_or_else(|| ParseError::new("concurrency requires 'over' field"))?;
 
     // "block" string
     if let Some(s) = over_val.as_str() {
         if s == "block" {
             return Ok(OverflowAction::Block);
         }
-        return Err(ParseError(format!(
+        return Err(ParseError::new(format!(
             "concurrency.over string must be 'block', got '{s}'"
         )));
     }
@@ -125,19 +125,19 @@ fn parse_overflow_action(obj: &Map<String, Value>) -> Result<OverflowAction, Par
     // Object: either a reply {s: ...} or {block: ..., then: ...}
     let over_obj = over_val
         .as_object()
-        .ok_or_else(|| ParseError("concurrency.over must be a string or object".into()))?;
+        .ok_or_else(|| ParseError::new("concurrency.over must be a string or object"))?;
 
     if over_obj.contains_key("block") {
         // BlockWithTimeout
         let block_str = over_obj
             .get("block")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError("block timeout must be a string".into()))?;
+            .ok_or_else(|| ParseError::new("block timeout must be a string"))?;
         let timeout = parse_duration_range(block_str)?;
 
         let then_val = over_obj
             .get("then")
-            .ok_or_else(|| ParseError("block requires 'then' reply".into()))?;
+            .ok_or_else(|| ParseError::new("block requires 'then' reply"))?;
         let then = parse_reply(then_val)?;
 
         Ok(OverflowAction::BlockWithTimeout { timeout, then })
@@ -155,16 +155,16 @@ fn parse_rps(obj: &Map<String, Value>) -> Result<Option<RateLimitSpec>, ParseErr
 
     let rl_obj = val
         .as_object()
-        .ok_or_else(|| ParseError("rps must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("rps must be an object"))?;
 
     let max = rl_obj
         .get("max")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| ParseError("rps requires 'max' as a positive integer".into()))?;
+        .ok_or_else(|| ParseError::new("rps requires 'max' as a positive integer"))?;
 
     let over_val = rl_obj
         .get("over")
-        .ok_or_else(|| ParseError("rps requires 'over' reply".into()))?;
+        .ok_or_else(|| ParseError::new("rps requires 'over' reply"))?;
     let over = parse_reply(over_val)?;
 
     Ok(Some(RateLimitSpec {
@@ -177,7 +177,7 @@ fn parse_timeout(obj: &Map<String, Value>) -> Result<Option<Range<Duration>>, Pa
     match obj.get("timeout") {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(parse_duration_range(s)?)),
-        Some(v) => Err(ParseError(format!("timeout must be a string, got {v}"))),
+        Some(v) => Err(ParseError::new(format!("timeout must be a string, got {v}"))),
     }
 }
 
@@ -188,7 +188,7 @@ pub fn parse_crud_spec(crud_obj: &Map<String, Value>) -> Result<CrudSpec, ParseE
         Some(id_val) => {
             let id_obj = id_val
                 .as_object()
-                .ok_or_else(|| ParseError("crud.id must be an object".into()))?;
+                .ok_or_else(|| ParseError::new("crud.id must be an object"))?;
 
             let name = id_obj
                 .get("name")
@@ -209,7 +209,7 @@ pub fn parse_crud_spec(crud_obj: &Map<String, Value>) -> Result<CrudSpec, ParseE
     let data = match crud_obj.get("data") {
         None => Vec::new(),
         Some(Value::Array(arr)) => arr.clone(),
-        Some(v) => return Err(ParseError(format!("crud.data must be an array, got {v}"))),
+        Some(v) => return Err(ParseError::new(format!("crud.data must be an array, got {v}"))),
     };
 
     Ok(CrudSpec { id, data })

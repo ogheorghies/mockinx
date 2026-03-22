@@ -1,17 +1,78 @@
 use rand::Rng;
 use std::fmt;
 
-/// Parse error for unit values.
+/// Parse error with optional field path and context.
 #[derive(Debug, Clone)]
-pub struct ParseError(pub String);
+pub struct ParseError {
+    /// Human-readable error message.
+    pub msg: String,
+    /// Field path where the error occurred (e.g. ["serve", "conn", "max"]).
+    pub path: Vec<String>,
+    /// The actual value that was received (if available).
+    pub got: Option<String>,
+}
+
+impl ParseError {
+    /// Create a simple error with just a message.
+    pub fn new(msg: impl Into<String>) -> Self {
+        ParseError {
+            msg: msg.into(),
+            path: Vec::new(),
+            got: None,
+        }
+    }
+
+    /// Attach what was actually received.
+    pub fn with_got(mut self, got: impl Into<String>) -> Self {
+        self.got = Some(got.into());
+        self
+    }
+
+    /// Prepend a field path segment (called by parent parsers).
+    pub fn in_field(mut self, field: impl Into<String>) -> Self {
+        self.path.insert(0, field.into());
+        self
+    }
+
+    /// Prepend an indexed field path segment like "rule[2]" or "chaos[0]".
+    pub fn in_index(mut self, name: &str, idx: usize) -> Self {
+        self.path.insert(0, format!("{name}[{idx}]"));
+        self
+    }
+
+    /// Format the field path as a dot-separated string.
+    pub fn path_str(&self) -> String {
+        self.path.join(".")
+    }
+}
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        if !self.path.is_empty() {
+            write!(f, "{}: ", self.path_str())?;
+        }
+        write!(f, "{}", self.msg)?;
+        if let Some(ref got) = self.got {
+            write!(f, " (got {got})")?;
+        }
+        Ok(())
     }
 }
 
 impl std::error::Error for ParseError {}
+
+// Allow creating ParseError from a string for backward compatibility
+impl From<String> for ParseError {
+    fn from(msg: String) -> Self {
+        ParseError::new(msg)
+    }
+}
+
+impl From<&str> for ParseError {
+    fn from(msg: &str) -> Self {
+        ParseError::new(msg)
+    }
+}
 
 /// Trait for types that support linear interpolation and scaling.
 /// Required by Range for sampling and percentage-based ranges.
@@ -45,7 +106,7 @@ impl Scalable for ByteSize {
 pub fn parse_byte_size(s: &str) -> Result<ByteSize, ParseError> {
     let s = s.trim().to_lowercase();
     if s.is_empty() {
-        return Err(ParseError("empty byte size string".into()));
+        return Err(ParseError::new("empty byte size string"));
     }
 
     let (num_str, multiplier) = if let Some(n) = s.strip_suffix("gb") {
@@ -57,15 +118,15 @@ pub fn parse_byte_size(s: &str) -> Result<ByteSize, ParseError> {
     } else if let Some(n) = s.strip_suffix("b") {
         (n, 1u64)
     } else {
-        return Err(ParseError(format!("invalid byte size unit in '{s}', expected b/kb/mb/gb")));
+        return Err(ParseError::new(format!("invalid byte size unit in '{s}', expected b/kb/mb/gb")));
     };
 
     let num: f64 = num_str
         .parse()
-        .map_err(|_| ParseError(format!("invalid number in byte size '{s}'")))?;
+        .map_err(|_| ParseError::new(format!("invalid number in byte size '{s}'")))?;
 
     if num < 0.0 {
-        return Err(ParseError(format!("byte size cannot be negative: '{s}'")));
+        return Err(ParseError::new(format!("byte size cannot be negative: '{s}'")));
     }
 
     Ok(ByteSize((num * multiplier as f64) as u64))
@@ -102,7 +163,7 @@ impl Scalable for Duration {
 pub fn parse_duration(s: &str) -> Result<Duration, ParseError> {
     let s = s.trim().to_lowercase();
     if s.is_empty() {
-        return Err(ParseError("empty duration string".into()));
+        return Err(ParseError::new("empty duration string"));
     }
 
     let (num_str, factor_secs) = if let Some(n) = s.strip_suffix("ms") {
@@ -112,15 +173,15 @@ pub fn parse_duration(s: &str) -> Result<Duration, ParseError> {
     } else if let Some(n) = s.strip_suffix("m") {
         (n, 60.0)
     } else {
-        return Err(ParseError(format!("invalid duration unit in '{s}', expected ms/s/m")));
+        return Err(ParseError::new(format!("invalid duration unit in '{s}', expected ms/s/m")));
     };
 
     let num: f64 = num_str
         .parse()
-        .map_err(|_| ParseError(format!("invalid number in duration '{s}'")))?;
+        .map_err(|_| ParseError::new(format!("invalid number in duration '{s}'")))?;
 
     if num < 0.0 {
-        return Err(ParseError(format!("duration cannot be negative: '{s}'")));
+        return Err(ParseError::new(format!("duration cannot be negative: '{s}'")));
     }
 
     Ok(Duration(std::time::Duration::from_secs_f64(num * factor_secs)))
@@ -151,12 +212,12 @@ impl Scalable for Speed {
 pub fn parse_speed(s: &str) -> Result<Speed, ParseError> {
     let s_trimmed = s.trim().to_lowercase();
     if s_trimmed.is_empty() {
-        return Err(ParseError("empty speed string".into()));
+        return Err(ParseError::new("empty speed string"));
     }
 
     let size_str = s_trimmed
         .strip_suffix("/s")
-        .ok_or_else(|| ParseError(format!("invalid speed format '{s_trimmed}', expected .../s")))?;
+        .ok_or_else(|| ParseError::new(format!("invalid speed format '{s_trimmed}', expected .../s")))?;
 
     let byte_size = parse_byte_size(size_str)?;
     Ok(Speed(byte_size.bytes()))
@@ -202,9 +263,9 @@ where
             let base = parse_fn(base_str)?;
             let pct: f64 = pct_str
                 .parse()
-                .map_err(|_| ParseError(format!("invalid percentage in '{s}'")))?;
+                .map_err(|_| ParseError::new(format!("invalid percentage in '{s}'")))?;
             if pct < 0.0 {
-                return Err(ParseError(format!("percentage cannot be negative: '{s}'")));
+                return Err(ParseError::new(format!("percentage cannot be negative: '{s}'")));
             }
             let fraction = pct / 100.0;
             if fraction == 0.0 {
@@ -219,7 +280,7 @@ where
             let min = parse_fn(base_str)?;
             let max = parse_fn(rest)?;
             if max < min {
-                return Err(ParseError(format!("range min > max in '{s}'")));
+                return Err(ParseError::new(format!("range min > max in '{s}'")));
             }
             if min == max {
                 Ok(Range::Fixed(min))
@@ -252,7 +313,7 @@ pub fn parse_speed_range(s: &str) -> Result<Range<Speed>, ParseError> {
 pub fn parse_byte_size_range_value(v: &serde_json::Value) -> Result<Range<ByteSize>, ParseError> {
     let s = v
         .as_str()
-        .ok_or_else(|| ParseError("byte size range must be a string".into()))?;
+        .ok_or_else(|| ParseError::new("byte size range must be a string"))?;
     parse_byte_size_range(s)
 }
 
@@ -260,7 +321,7 @@ pub fn parse_byte_size_range_value(v: &serde_json::Value) -> Result<Range<ByteSi
 pub fn parse_duration_range_value(v: &serde_json::Value) -> Result<Range<Duration>, ParseError> {
     let s = v
         .as_str()
-        .ok_or_else(|| ParseError("duration range must be a string".into()))?;
+        .ok_or_else(|| ParseError::new("duration range must be a string"))?;
     parse_duration_range(s)
 }
 
@@ -268,7 +329,7 @@ pub fn parse_duration_range_value(v: &serde_json::Value) -> Result<Range<Duratio
 pub fn parse_speed_range_value(v: &serde_json::Value) -> Result<Range<Speed>, ParseError> {
     let s = v
         .as_str()
-        .ok_or_else(|| ParseError("speed range must be a string".into()))?;
+        .ok_or_else(|| ParseError::new("speed range must be a string"))?;
     parse_speed_range(s)
 }
 

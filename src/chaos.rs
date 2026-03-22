@@ -30,23 +30,23 @@ pub enum ChaosResult {
 fn parse_percentage(v: &Value) -> Result<f64, ParseError> {
     let s = v
         .as_str()
-        .ok_or_else(|| ParseError("p must be a string like \"7%\"".into()))?;
+        .ok_or_else(|| ParseError::new("p must be a string like \"7%\""))?;
 
     let s = s.trim();
     let num_str = s
         .strip_suffix('%')
-        .ok_or_else(|| ParseError(format!("p must end with %, got '{s}'")))?;
+        .ok_or_else(|| ParseError::new(format!("p must end with %, got '{s}'")))?;
 
     let p: f64 = num_str
         .trim()
         .parse()
-        .map_err(|_| ParseError(format!("invalid number in p: '{s}'")))?;
+        .map_err(|_| ParseError::new(format!("invalid number in p: '{s}'")))?;
 
     if p < 0.0 {
-        return Err(ParseError(format!("p cannot be negative: '{s}'")));
+        return Err(ParseError::new(format!("p cannot be negative: '{s}'")));
     }
     if p > 100.0 {
-        return Err(ParseError(format!("p cannot exceed 100%: '{s}'")));
+        return Err(ParseError::new(format!("p cannot exceed 100%: '{s}'")));
     }
 
     Ok(p)
@@ -56,10 +56,10 @@ fn parse_percentage(v: &Value) -> Result<f64, ParseError> {
 pub fn parse_chaos(v: &Value) -> Result<Vec<ChaosEntry>, ParseError> {
     let arr = v
         .as_array()
-        .ok_or_else(|| ParseError("chaos must be an array".into()))?;
+        .ok_or_else(|| ParseError::new("chaos must be an array"))?;
 
     if arr.is_empty() {
-        return Err(ParseError("chaos array cannot be empty".into()));
+        return Err(ParseError::new("chaos array cannot be empty"));
     }
 
     let mut entries = Vec::with_capacity(arr.len());
@@ -68,16 +68,16 @@ pub fn parse_chaos(v: &Value) -> Result<Vec<ChaosEntry>, ParseError> {
     for item in arr {
         let obj = item
             .as_object()
-            .ok_or_else(|| ParseError("chaos entry must be an object".into()))?;
+            .ok_or_else(|| ParseError::new("chaos entry must be an object"))?;
 
         let p = parse_percentage(
             obj.get("p")
-                .ok_or_else(|| ParseError("chaos entry requires 'p'".into()))?,
+                .ok_or_else(|| ParseError::new("chaos entry requires 'p'"))?,
         )?;
 
         total_p += p;
         if total_p > 100.0 {
-            return Err(ParseError(format!(
+            return Err(ParseError::new(format!(
                 "chaos percentages sum to {total_p}%, cannot exceed 100%"
             )));
         }
@@ -91,7 +91,7 @@ pub fn parse_chaos(v: &Value) -> Result<Vec<ChaosEntry>, ParseError> {
             Some(v) => {
                 let serve_obj = v
                     .as_object()
-                    .ok_or_else(|| ParseError("chaos serve must be an object".into()))?;
+                    .ok_or_else(|| ParseError::new("chaos serve must be an object"))?;
                 let spec = parse_delivery_fields(serve_obj)?;
                 if spec == DeliverySpec::default() {
                     None
@@ -103,8 +103,8 @@ pub fn parse_chaos(v: &Value) -> Result<Vec<ChaosEntry>, ParseError> {
         };
 
         if reply.is_none() && serve.is_none() {
-            return Err(ParseError(
-                "chaos entry must have 'reply' and/or 'serve'".into(),
+            return Err(ParseError::new(
+                "chaos entry must have 'reply' and/or 'serve'",
             ));
         }
 

@@ -65,7 +65,7 @@ fn parse_pace(obj: &Map<String, Value>) -> Result<Option<PaceSpec>, ParseError> 
 
     let s = pace_val
         .as_str()
-        .ok_or_else(|| ParseError("pace must be a string".into()))?;
+        .ok_or_else(|| ParseError::new("pace must be a string"))?;
 
     Ok(Some(parse_pace_str(s)?))
 }
@@ -108,11 +108,11 @@ fn parse_drop(obj: &Map<String, Value>) -> Result<Option<DropSpec>, ParseError> 
         let after = drop_obj
             .get("after")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError("drop object requires 'after' string field".into()))?;
+            .ok_or_else(|| ParseError::new("drop object requires 'after' string field"))?;
         return parse_drop_value(after);
     }
 
-    Err(ParseError("drop must be a string or object".into()))
+    Err(ParseError::new("drop must be a string or object"))
 }
 
 fn parse_drop_value(s: &str) -> Result<Option<DropSpec>, ParseError> {
@@ -121,7 +121,7 @@ fn parse_drop_value(s: &str) -> Result<Option<DropSpec>, ParseError> {
     } else if let Ok(range) = parse_duration_range(s) {
         Ok(Some(DropSpec::AfterTime(range)))
     } else {
-        Err(ParseError(format!(
+        Err(ParseError::new(format!(
             "drop '{s}' is neither a valid byte size nor duration"
         )))
     }
@@ -143,11 +143,11 @@ fn parse_first_byte(obj: &Map<String, Value>) -> Result<Option<Range<Duration>>,
         let delay_str = fb_obj
             .get("delay")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError("first_byte object requires 'delay' string field".into()))?;
+            .ok_or_else(|| ParseError::new("first_byte object requires 'delay' string field"))?;
         return Ok(Some(parse_duration_range(delay_str)?));
     }
 
-    Err(ParseError("first_byte must be a string or object".into()))
+    Err(ParseError::new("first_byte must be a string or object"))
 }
 
 #[cfg(test)]

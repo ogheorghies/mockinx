@@ -65,7 +65,7 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
     match v {
         Value::Array(arr) => {
             if arr.is_empty() {
-                return Err(ParseError("reply sequence cannot be empty".into()));
+                return Err(ParseError::new("reply sequence cannot be empty"));
             }
             let mut replies = Vec::with_capacity(arr.len());
             for item in arr {
@@ -85,7 +85,7 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
                 } else {
                     let crud_obj = crud_val
                         .as_object()
-                        .ok_or_else(|| ParseError("crud! must be true or an object".into()))?;
+                        .ok_or_else(|| ParseError::new("crud! must be true or an object"))?;
                     crate::serve::parse_crud_spec(crud_obj)?
                 };
                 // Extract headers from h: field if present
@@ -99,7 +99,7 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
                 Ok(ReplyStrategy::Static(parse_reply(v)?))
             }
         }
-        _ => Err(ParseError(format!("reply must be an object or array, got {v}"))),
+        _ => Err(ParseError::new(format!("reply must be an object or array, got {v}"))),
     }
 }
 
@@ -110,7 +110,7 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
 pub fn parse_reply(v: &Value) -> Result<ReplySpec, ParseError> {
     let obj = v
         .as_object()
-        .ok_or_else(|| ParseError("reply must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("reply must be an object"))?;
 
     let status = parse_status(obj)?;
     let headers = parse_headers(obj)?;
@@ -129,13 +129,13 @@ fn parse_status(obj: &Map<String, Value>) -> Result<u16, ParseError> {
         Some(Value::Number(n)) => {
             let code = n
                 .as_u64()
-                .ok_or_else(|| ParseError(format!("status must be a positive integer, got {n}")))?;
+                .ok_or_else(|| ParseError::new(format!("status must be a positive integer, got {n}")))?;
             if code > 999 {
-                return Err(ParseError(format!("status code {code} out of range (0-999)")));
+                return Err(ParseError::new(format!("status code {code} out of range (0-999)")));
             }
             Ok(code as u16)
         }
-        Some(v) => Err(ParseError(format!("status must be a number, got {v}"))),
+        Some(v) => Err(ParseError::new(format!("status must be a number, got {v}"))),
     }
 }
 
@@ -147,7 +147,7 @@ fn parse_headers(obj: &Map<String, Value>) -> Result<Map<String, Value>, ParseEr
             yttp::expand_headers(&mut headers);
             Ok(headers)
         }
-        Some(v) => Err(ParseError(format!("headers must be an object, got {v}"))),
+        Some(v) => Err(ParseError::new(format!("headers must be an object, got {v}"))),
     }
 }
 
@@ -173,20 +173,20 @@ fn parse_rand_body(obj: &Map<String, Value>, key: &str) -> Result<BodySpec, Pars
     let rand_obj = obj
         .get(key)
         .and_then(|v| v.as_object())
-        .ok_or_else(|| ParseError("rand must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("rand must be an object"))?;
 
     let size_val = rand_obj
         .get("size")
-        .ok_or_else(|| ParseError("rand requires 'size' field".into()))?;
+        .ok_or_else(|| ParseError::new("rand requires 'size' field"))?;
     let size_str = size_val
         .as_str()
-        .ok_or_else(|| ParseError("rand size must be a string".into()))?;
+        .ok_or_else(|| ParseError::new("rand size must be a string"))?;
     let size = parse_byte_size(size_str)?;
 
     let seed = rand_obj
         .get("seed")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| ParseError("rand requires 'seed' as a positive integer".into()))?;
+        .ok_or_else(|| ParseError::new("rand requires 'seed' as a positive integer"))?;
 
     Ok(BodySpec::Rand { size, seed })
 }
@@ -195,23 +195,23 @@ fn parse_pattern_body(obj: &Map<String, Value>, key: &str) -> Result<BodySpec, P
     let pattern_obj = obj
         .get(key)
         .and_then(|v| v.as_object())
-        .ok_or_else(|| ParseError("pattern must be an object".into()))?;
+        .ok_or_else(|| ParseError::new("pattern must be an object"))?;
 
     let repeat = pattern_obj
         .get("repeat")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| ParseError("pattern requires 'repeat' string".into()))?;
+        .ok_or_else(|| ParseError::new("pattern requires 'repeat' string"))?;
 
     if repeat.is_empty() {
-        return Err(ParseError("pattern repeat string cannot be empty".into()));
+        return Err(ParseError::new("pattern repeat string cannot be empty"));
     }
 
     let size_val = pattern_obj
         .get("size")
-        .ok_or_else(|| ParseError("pattern requires 'size' field".into()))?;
+        .ok_or_else(|| ParseError::new("pattern requires 'size' field"))?;
     let size_str = size_val
         .as_str()
-        .ok_or_else(|| ParseError("pattern size must be a string".into()))?;
+        .ok_or_else(|| ParseError::new("pattern size must be a string"))?;
     let size = parse_byte_size(size_str)?;
 
     Ok(BodySpec::Pattern {

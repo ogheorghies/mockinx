@@ -54,22 +54,22 @@ fn normalize_path(path: &str) -> &str {
 pub fn parse_match_rule(v: &Value) -> Result<MatchRule, ParseError> {
     match v {
         Value::String(s) if s == "_" => Ok(MatchRule::CatchAll),
-        Value::String(s) => Err(ParseError(format!(
+        Value::String(s) => Err(ParseError::new(format!(
             "invalid match string '{s}', only '_' (catch-all) is allowed"
         ))),
         Value::Object(obj) => {
             if obj.is_empty() {
-                return Err(ParseError("match object cannot be empty".into()));
+                return Err(ParseError::new("match object cannot be empty"));
             }
             if obj.len() > 1 {
-                return Err(ParseError(
-                    "match object must have exactly one key (method: path)".into(),
+                return Err(ParseError::new(
+                    "match object must have exactly one key (method: path)",
                 ));
             }
             let (key, val) = obj.iter().next().unwrap();
             let path = val
                 .as_str()
-                .ok_or_else(|| ParseError(format!("match path must be a string, got {val}")))?;
+                .ok_or_else(|| ParseError::new(format!("match path must be a string, got {val}")))?;
 
             // Ensure path has leading /
             let path = if path.starts_with('/') {
@@ -87,10 +87,10 @@ pub fn parse_match_rule(v: &Value) -> Result<MatchRule, ParseError> {
                     path,
                 })
             } else {
-                Err(ParseError(format!("unknown method shortcut '{key}'")))
+                Err(ParseError::new(format!("unknown method shortcut '{key}'")))
             }
         }
-        _ => Err(ParseError(format!(
+        _ => Err(ParseError::new(format!(
             "match must be a string or object, got {v}"
         ))),
     }
