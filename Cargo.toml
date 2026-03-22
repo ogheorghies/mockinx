@@ -1,6 +1,6 @@
 [package]
 name = "mockinx"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Mock server with codeless config of pacing, drops, throttling, and chaos"
 keywords = ["mock", "http", "testing", "chaos", "throttle"]
@@ -23,11 +23,11 @@ clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 yttp = "0.0.5"
 
-[[bin]]
+[[example]]
 name = "baseline-server"
 path = "benches/baseline.rs"
 
-[[bin]]
+[[example]]
 name = "raw-tcp-server"
 path = "benches/raw_tcp.rs"
 

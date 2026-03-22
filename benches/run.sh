@@ -38,12 +38,12 @@ echo -e "${DIM}wrk -t${WRK_THREADS} -c${WRK_CONNECTIONS} -d${WRK_DURATION}${RESE
 echo
 
 echo -e "${DIM}building release...${RESET}"
-cargo build --release --bin mockinx --bin baseline-server --bin raw-tcp-server 2>&1 | tail -1
+cargo build --release --bin mockinx --example baseline-server --example raw-tcp-server 2>&1 | tail -1
 
 # Start all servers
-./target/release/raw-tcp-server "$RAW_PORT" 2>/dev/null &
+./target/release/examples/raw-tcp-server "$RAW_PORT" 2>/dev/null &
 PIDS+=($!)
-./target/release/baseline-server "$BASELINE_PORT" 2>/dev/null &
+./target/release/examples/baseline-server "$BASELINE_PORT" 2>/dev/null &
 PIDS+=($!)
 ./target/release/mockinx "$MOCKINX_PORT" 2>/dev/null &
 PIDS+=($!)
