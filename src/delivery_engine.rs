@@ -61,10 +61,13 @@ pub fn deliver(body: Vec<u8>, spec: &DeliverySpec, rng: &mut impl Rng) -> Delive
         (size.max(1), Some(delay))
     } else if let Some(ref span_range) = spec.span {
         let duration = span_range.sample(rng).as_std();
-        let chunk_size = DEFAULT_CHUNK_SIZE;
+        // Target at least 10 chunks for smooth progressive delivery
+        let min_chunks = 10usize;
+        let chunk_size = (body.len() / min_chunks).max(1).min(DEFAULT_CHUNK_SIZE);
         let num_chunks = (body.len() + chunk_size - 1) / chunk_size.max(1);
+        // Distribute delay across inter-chunk gaps (num_chunks - 1 gaps)
         let delay = if num_chunks > 1 {
-            duration / num_chunks as u32
+            duration / (num_chunks - 1) as u32
         } else {
             duration
         };

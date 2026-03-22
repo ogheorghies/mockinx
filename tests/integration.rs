@@ -194,6 +194,51 @@ async fn first_byte_delay_via_serve() {
 }
 
 #[tokio::test]
+async fn span_delivers_progressively() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/progressive"},
+        "reply": {"s": 200, "b": {"rand!": {"size": "10kb", "seed": 99}}},
+        "serve": {"span": "1s"}
+    })).await;
+
+    let resp = reqwest::get(&srv.url("/progressive")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Stream the body, recording how much data arrives by each checkpoint
+    let start = std::time::Instant::now();
+    let mut total_bytes = 0usize;
+    let mut bytes_at_300ms = None;
+    let mut bytes_at_600ms = None;
+    let mut stream = resp.bytes_stream();
+
+    use futures_util::StreamExt;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.unwrap();
+        total_bytes += chunk.len();
+        let elapsed = start.elapsed();
+        if bytes_at_300ms.is_none() && elapsed >= std::time::Duration::from_millis(300) {
+            bytes_at_300ms = Some(total_bytes);
+        }
+        if bytes_at_600ms.is_none() && elapsed >= std::time::Duration::from_millis(600) {
+            bytes_at_600ms = Some(total_bytes);
+        }
+    }
+
+    assert_eq!(total_bytes, 10240, "should receive full 10kb");
+
+    // At 300ms (~30% of 1s span), should have received some but not all data
+    let at_300 = bytes_at_300ms.unwrap_or(total_bytes);
+    assert!(at_300 > 0, "should have received some data by 300ms");
+    assert!(at_300 < 8000, "should NOT have received most data by 300ms, got {at_300}");
+
+    // At 600ms (~60% of 1s span), should have more than at 300ms
+    let at_600 = bytes_at_600ms.unwrap_or(total_bytes);
+    assert!(at_600 > at_300, "should have more data at 600ms ({at_600}) than 300ms ({at_300})");
+    assert!(at_600 < total_bytes, "should NOT have all data by 600ms, got {at_600}");
+}
+
+#[tokio::test]
 async fn drop_after_bytes_via_serve() {
     let srv = TestServer::start().await;
     srv.register_json(&serde_json::json!({
