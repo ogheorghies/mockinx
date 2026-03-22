@@ -1,11 +1,11 @@
-use crate::behavior_engine::{BehaviorResult, BehaviorRuntime};
-use crate::body::generate_body;
 use crate::chaos::{ChaosResult, resolve_chaos};
-use crate::crud::{CrudStore, extract_id};
-use crate::delivery_engine::{DeliveryStream, deliver};
 use crate::reply::{BodySpec, ReplySpec};
-use crate::store::{RuleEntry, RuleStore};
+use crate::reply::body::generate_body;
+use crate::reply::crud::{CrudStore, extract_id};
 use crate::rule::parse_rules;
+use crate::serve::{BehaviorRuntime, DeliveryStream, deliver};
+use crate::serve::runtime::BehaviorResult;
+use crate::store::{RuleEntry, RuleStore};
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
@@ -74,7 +74,7 @@ impl AppState {
 
             // Ensure runtimes vec is large enough
             while runtimes.len() <= idx {
-                runtimes.push(Arc::new(BehaviorRuntime::new(&crate::behavior::BehaviorSpec::default())));
+                runtimes.push(Arc::new(BehaviorRuntime::new(&crate::serve::BehaviorSpec::default())));
             }
             runtimes[idx] = runtime;
 
@@ -350,7 +350,7 @@ fn build_reply_response(reply: &ReplySpec) -> Response {
 /// Build a response with delivery shaping, optionally holding a concurrency permit.
 async fn build_delivery_response(
     reply: &ReplySpec,
-    delivery: &crate::delivery::DeliverySpec,
+    delivery: &crate::serve::DeliverySpec,
     rng: &mut StdRng,
     permit: Option<OwnedSemaphorePermit>,
 ) -> Response {
@@ -358,7 +358,7 @@ async fn build_delivery_response(
 
     // If default delivery (no shaping), return immediately.
     // Permit is dropped here — fine because the full body is buffered.
-    if *delivery == crate::delivery::DeliverySpec::default() {
+    if *delivery == crate::serve::DeliverySpec::default() {
         return build_reply_response(reply);
     }
 

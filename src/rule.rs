@@ -1,8 +1,7 @@
-use crate::behavior::{BehaviorSpec, parse_behavior};
 use crate::chaos::{ChaosEntry, parse_chaos};
-use crate::delivery::{DeliverySpec, parse_delivery_fields};
 use crate::match_rule::{MatchRule, parse_match_rule};
 use crate::reply::{ReplySpec, ReplyStrategy, parse_reply, parse_reply_strategy};
+use crate::serve::{BehaviorSpec, DeliverySpec, parse_behavior, parse_delivery_fields, parse_serve};
 use crate::units::ParseError;
 use serde_json::Value;
 
@@ -85,22 +84,6 @@ pub fn parse_rule(v: &Value) -> Result<Rule, ParseError> {
     })
 }
 
-/// Parse the merged `serve:` block — contains both delivery shaping and behavior fields.
-fn parse_serve(v: &Value) -> Result<(DeliverySpec, BehaviorSpec), ParseError> {
-    let obj = v
-        .as_object()
-        .ok_or_else(|| ParseError("serve must be an object".into()))?;
-
-    // Parse delivery fields (span, speed, drop, first_byte, chunk)
-    let delivery = parse_delivery_fields(obj)?;
-
-    // Parse behavior fields (conn, rps, timeout, fail, sequence, crud)
-    // from the same object
-    let behavior = parse_behavior(v)?;
-
-    Ok((delivery, behavior))
-}
-
 /// Parse one or more rules from a `serde_json::Value`.
 ///
 /// Accepts either a single object (returns vec of one) or an array of objects.
@@ -124,8 +107,8 @@ pub fn parse_rules(v: &Value) -> Result<Vec<Rule>, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::behavior::SequenceScope;
-    use crate::delivery::DropSpec;
+    use crate::serve::SequenceScope;
+    use crate::serve::DropSpec;
 
     fn unwrap_static(strategy: &ReplyStrategy) -> &ReplySpec {
         match strategy {

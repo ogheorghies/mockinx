@@ -1,4 +1,4 @@
-use crate::behavior::CrudSpec;
+use crate::serve::CrudSpec;
 use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
 use std::sync::RwLock;
@@ -201,7 +201,7 @@ pub fn extract_id(base_path: &str, request_path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::behavior::{CrudIdSpec, CrudSpec};
+    use crate::serve::{CrudIdSpec, CrudSpec};
     use std::sync::Arc;
 
     fn seeded_store() -> CrudStore {

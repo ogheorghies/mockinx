@@ -1,4 +1,4 @@
-use crate::behavior::{BehaviorSpec, OverflowAction};
+use super::behavior_types::{BehaviorSpec, OverflowAction};
 use crate::reply::ReplySpec;
 use rand::Rng;
 use std::sync::Mutex;
@@ -120,7 +120,7 @@ impl BehaviorRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::behavior::*;
+    use crate::serve::*;
     use crate::reply::ReplySpec;
     use crate::units::{Duration, Range};
     use rand::SeedableRng;

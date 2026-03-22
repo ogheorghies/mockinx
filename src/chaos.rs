@@ -1,4 +1,4 @@
-use crate::delivery::{DeliverySpec, parse_delivery_fields};
+use crate::serve::{DeliverySpec, parse_delivery_fields};
 use crate::reply::{ReplySpec, parse_reply};
 use crate::units::ParseError;
 use rand::Rng;

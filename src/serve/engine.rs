@@ -1,4 +1,4 @@
-use crate::delivery::{DeliverySpec, DropSpec, PaceSpec};
+use super::pace::{DeliverySpec, DropSpec, PaceSpec};
 use bytes::Bytes;
 use rand::Rng;
 use std::pin::Pin;
@@ -185,7 +185,7 @@ impl Stream for DeliveryStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delivery::*;
+    use crate::serve::pace::*;
     use crate::units::*;
     use rand::SeedableRng;
     use rand::rngs::StdRng;

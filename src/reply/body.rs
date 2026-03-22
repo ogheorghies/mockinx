@@ -1,4 +1,4 @@
-use crate::reply::BodySpec;
+use super::BodySpec;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::StdRng;

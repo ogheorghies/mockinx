@@ -108,8 +108,8 @@ impl Default for RuleStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::behavior::BehaviorSpec;
-    use crate::delivery::DeliverySpec;
+    use crate::serve::BehaviorSpec;
+    use crate::serve::pace::DeliverySpec;
     use crate::match_rule::MatchRule;
     use crate::reply::{ReplySpec, ReplyStrategy};
     use serde_json::json;

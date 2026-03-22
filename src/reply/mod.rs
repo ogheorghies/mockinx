@@ -1,4 +1,7 @@
-use crate::behavior::CrudSpec;
+pub mod body;
+pub mod crud;
+
+use crate::serve::CrudSpec;
 use crate::units::{ByteSize, ParseError, parse_byte_size};
 use serde_json::{Map, Value};
 
@@ -75,7 +78,7 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
                 let crud_obj = crud_val
                     .as_object()
                     .ok_or_else(|| ParseError("crud! must be an object".into()))?;
-                let spec = crate::behavior::parse_crud_spec(crud_obj)?;
+                let spec = crate::serve::parse_crud_spec(crud_obj)?;
                 // Extract headers from h: field if present
                 let mut headers = obj
                     .get("h")
