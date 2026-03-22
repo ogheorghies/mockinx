@@ -2,7 +2,7 @@
 name = "mockinx"
 version = "0.1.1"
 edition = "2024"
-description = "Mock server with codeless config of pacing, drops, throttling, and chaos"
+description = "Codeless mock server: OK, Error, fast, slow, pacing, drops, throttling, chaos"
 keywords = ["mock", "http", "testing", "chaos", "throttle"]
 license = "MIT"
 repository = "https://github.com/ogheorghies/mockinx"
