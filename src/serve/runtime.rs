@@ -82,15 +82,7 @@ impl BehaviorRuntime {
             }
         }
 
-        // 2. Fail injection
-        if let Some(fail) = &spec.fail {
-            let r: f64 = rng.r#gen();
-            if r < fail.rate {
-                return BehaviorResult::Reject(fail.reply.clone());
-            }
-        }
-
-        // 3. Concurrency
+        // 2. Concurrency
         if let (Some(sem), Some(conc)) = (&self.semaphore, &spec.concurrency) {
             match &conc.over {
                 OverflowAction::Reply(reply) => {
@@ -282,35 +274,5 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn fail_injection() {
-        let spec = BehaviorSpec {
-            fail: Some(FailSpec {
-                rate: 0.5,
-                reply: reject_reply(500),
-            }),
-            ..Default::default()
-        };
-        let runtime = BehaviorRuntime::new(&spec);
-
-        let mut proceed_count = 0;
-        let mut reject_count = 0;
-        for seed in 0..100 {
-            let mut rng = StdRng::seed_from_u64(seed);
-            match runtime.check(&spec, &mut rng).await {
-                BehaviorResult::Proceed(_) => proceed_count += 1,
-                BehaviorResult::Reject(_) => reject_count += 1,
-            }
-        }
-
-        // With rate=0.5, expect roughly 50/50 (±15)
-        assert!(
-            proceed_count > 30,
-            "too few proceeds: {proceed_count}"
-        );
-        assert!(
-            reject_count > 30,
-            "too few rejects: {reject_count}"
-        );
-    }
+    // fail injection is now handled by chaos, tested in chaos.rs and integration tests
 }

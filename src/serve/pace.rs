@@ -92,21 +92,6 @@ pub fn parse_pace_str(s: &str) -> Result<PaceSpec, ParseError> {
     }
 }
 
-fn parse_optional_range<T, F>(
-    obj: &Map<String, Value>,
-    key: &str,
-    parser: F,
-) -> Result<Option<Range<T>>, ParseError>
-where
-    F: Fn(&str) -> Result<Range<T>, ParseError>,
-{
-    match obj.get(key) {
-        None => Ok(None),
-        Some(Value::String(s)) => Ok(Some(parser(s)?)),
-        Some(v) => Err(ParseError(format!("{key} must be a string, got {v}"))),
-    }
-}
-
 fn parse_drop(obj: &Map<String, Value>) -> Result<Option<DropSpec>, ParseError> {
     let drop_val = match obj.get("drop") {
         None => return Ok(None),

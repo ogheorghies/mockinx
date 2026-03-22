@@ -8,8 +8,8 @@ pub use pace::{DeliverySpec, DropSpec, PaceSpec, parse_delivery_fields, parse_pa
 pub use engine::{DeliveryStream, deliver};
 pub use runtime::BehaviorRuntime;
 pub use behavior_types::{
-    BehaviorSpec, ConcurrencySpec, CrudIdSpec, CrudSpec, FailSpec,
-    OverflowAction, RateLimitSpec, SequenceScope, SequenceSpec,
+    BehaviorSpec, ConcurrencySpec, CrudIdSpec, CrudSpec,
+    OverflowAction, RateLimitSpec,
     parse_behavior, parse_crud_spec,
 };
 

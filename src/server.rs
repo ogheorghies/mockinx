@@ -1,7 +1,7 @@
 use crate::chaos::{ChaosResult, resolve_chaos};
 use crate::reply::{BodySpec, ReplySpec};
 use crate::reply::body::generate_body;
-use crate::reply::crud::{CrudStore, extract_id};
+use crate::reply::crud::CrudStore;
 use crate::rule::parse_rules;
 use crate::serve::{BehaviorRuntime, DeliveryStream, deliver};
 use crate::serve::runtime::BehaviorResult;
@@ -78,11 +78,9 @@ impl AppState {
             }
             runtimes[idx] = runtime;
 
-            // Check for CRUD in ReplyStrategy or legacy behavior.crud
-            if let Some(crate::reply::ReplyStrategy::Crud { ref spec, .. }) = rule.reply {
+            // Register CRUD store if reply is CRUD
+            if let crate::reply::ReplyStrategy::Crud { ref spec, .. } = rule.reply {
                 crud_stores.insert(idx, Arc::new(CrudStore::new(spec)));
-            } else if let Some(ref crud_spec) = rule.behavior.crud {
-                crud_stores.insert(idx, Arc::new(CrudStore::new(crud_spec)));
             }
 
             self.store.add(rule, idx);
@@ -208,9 +206,8 @@ async fn resolve_and_deliver(
 
     // Resolve reply from ReplyStrategy
     let reply = match &entry.rule.reply {
-        Some(crate::reply::ReplyStrategy::Static(r)) => r.clone(),
-        Some(crate::reply::ReplyStrategy::Sequence(replies)) => {
-            // Per-connection cycling (falls back to global if no peer addr)
+        crate::reply::ReplyStrategy::Static(r) => r.clone(),
+        crate::reply::ReplyStrategy::Sequence(replies) => {
             let call_idx = if let Some(addr) = peer_addr {
                 entry.next_call_for(addr) as usize
             } else {
@@ -218,21 +215,9 @@ async fn resolve_and_deliver(
             };
             replies[call_idx % replies.len()].clone()
         }
-        Some(crate::reply::ReplyStrategy::Crud { spec: _, headers }) => {
+        crate::reply::ReplyStrategy::Crud { spec: _, headers } => {
             if let Some(crud_store) = get_crud_store(state, stub_idx) {
                 resolve_crud_reply(headers, &crud_store, method, path, body_bytes)
-            } else {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-        }
-        None => {
-            // Legacy: check behavior.sequence and behavior.crud
-            if let Some(ref seq) = entry.rule.behavior.sequence {
-                let call_idx = entry.next_call() as usize;
-                seq.replies[call_idx % seq.replies.len()].clone()
-            } else if let Some(crud_store) = get_crud_store(state, stub_idx) {
-                let headers = serde_json::Map::new();
-                resolve_crud_reply(&headers, &crud_store, method, path, body_bytes)
             } else {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }

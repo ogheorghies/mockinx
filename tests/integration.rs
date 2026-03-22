@@ -290,14 +290,13 @@ async fn concurrency_reject_via_serve() {
 }
 
 #[tokio::test]
-async fn fail_injection() {
+async fn fail_injection_via_chaos() {
     let srv = TestServer::start().await;
-    // fail still works via legacy behavior: path
-    srv.register(r#"{
-        match: {_: /flaky},
-        reply: {s: 200, b: ok},
-        behavior: {fail: {rate: 0.5, reply: {s: 500, b: error}}}
-    }"#).await;
+    srv.register_json(&serde_json::json!({
+        "match": {"_": "/flaky"},
+        "reply": {"s": 200, "b": "ok"},
+        "chaos": [{"p": 50, "reply": {"s": 500, "b": "error"}}]
+    })).await;
 
     let client = reqwest::Client::new();
     let mut ok_count = 0u32;
@@ -317,23 +316,26 @@ async fn fail_injection() {
 }
 
 #[tokio::test]
-async fn sequence_per_stub() {
+async fn sequence_via_reply_array() {
     let srv = TestServer::start().await;
     srv.register(r#"{
         match: {_: /seq},
-        behavior: {sequence: {per: stub, replies: [
+        reply: [
             {s: 401, b: unauthorized},
             {s: 200, b: ok}
-        ]}}
+        ]
     }"#).await;
 
-    let resp1 = reqwest::get(&srv.url("/seq")).await.unwrap();
+    // Use a single client to ensure same connection (per-connection counter)
+    let client = reqwest::Client::new();
+
+    let resp1 = client.get(&srv.url("/seq")).send().await.unwrap();
     assert_eq!(resp1.status(), 401);
 
-    let resp2 = reqwest::get(&srv.url("/seq")).await.unwrap();
+    let resp2 = client.get(&srv.url("/seq")).send().await.unwrap();
     assert_eq!(resp2.status(), 200);
 
-    let resp3 = reqwest::get(&srv.url("/seq")).await.unwrap();
+    let resp3 = client.get(&srv.url("/seq")).send().await.unwrap();
     assert_eq!(resp3.status(), 401);
 }
 

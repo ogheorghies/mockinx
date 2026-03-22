@@ -30,29 +30,6 @@ pub struct RateLimitSpec {
     pub over: ReplySpec,
 }
 
-/// Failure injection configuration.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FailSpec {
-    /// Fraction of requests that fail (0.0..1.0).
-    pub rate: f64,
-    /// Reply to send for failed requests.
-    pub reply: ReplySpec,
-}
-
-/// Scope for sequence counter reset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SequenceScope {
-    Connection,
-    Stub,
-}
-
-/// Sequence configuration — different reply per call.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SequenceSpec {
-    pub per: SequenceScope,
-    pub replies: Vec<ReplySpec>,
-}
-
 /// CRUD ID configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrudIdSpec {
@@ -78,15 +55,12 @@ pub struct CrudSpec {
     pub seed: Vec<Value>,
 }
 
-/// Endpoint-level behavior policies.
+/// Endpoint-level behavior policies (parsed from `serve:` block).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BehaviorSpec {
     pub concurrency: Option<ConcurrencySpec>,
     pub rate_limit: Option<RateLimitSpec>,
-    pub fail: Option<FailSpec>,
     pub timeout: Option<Range<Duration>>,
-    pub sequence: Option<SequenceSpec>,
-    pub crud: Option<CrudSpec>,
 }
 
 /// Parse a `BehaviorSpec` from a `serde_json::Value`.
@@ -97,18 +71,12 @@ pub fn parse_behavior(v: &Value) -> Result<BehaviorSpec, ParseError> {
 
     let concurrency = parse_conn(obj)?;
     let rate_limit = parse_rps(obj)?;
-    let fail = parse_fail(obj)?;
     let timeout = parse_timeout(obj)?;
-    let sequence = parse_sequence(obj)?;
-    let crud = parse_crud(obj)?;
 
     Ok(BehaviorSpec {
         concurrency,
         rate_limit,
-        fail,
         timeout,
-        sequence,
-        crud,
     })
 }
 
@@ -205,83 +173,12 @@ fn parse_rps(obj: &Map<String, Value>) -> Result<Option<RateLimitSpec>, ParseErr
     }))
 }
 
-fn parse_fail(obj: &Map<String, Value>) -> Result<Option<FailSpec>, ParseError> {
-    let val = match obj.get("fail") {
-        None => return Ok(None),
-        Some(v) => v,
-    };
-
-    let f_obj = val
-        .as_object()
-        .ok_or_else(|| ParseError("fail must be an object".into()))?;
-
-    let rate = f_obj
-        .get("rate")
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| ParseError("fail requires 'rate' as a number".into()))?;
-
-    if !(0.0..=1.0).contains(&rate) {
-        return Err(ParseError(format!(
-            "fail rate must be between 0.0 and 1.0, got {rate}"
-        )));
-    }
-
-    let reply_val = f_obj
-        .get("reply")
-        .ok_or_else(|| ParseError("fail requires 'reply' field".into()))?;
-    let reply = parse_reply(reply_val)?;
-
-    Ok(Some(FailSpec { rate, reply }))
-}
-
 fn parse_timeout(obj: &Map<String, Value>) -> Result<Option<Range<Duration>>, ParseError> {
     match obj.get("timeout") {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(parse_duration_range(s)?)),
         Some(v) => Err(ParseError(format!("timeout must be a string, got {v}"))),
     }
-}
-
-fn parse_sequence(obj: &Map<String, Value>) -> Result<Option<SequenceSpec>, ParseError> {
-    let val = match obj.get("sequence") {
-        None => return Ok(None),
-        Some(v) => v,
-    };
-
-    let seq_obj = val
-        .as_object()
-        .ok_or_else(|| ParseError("sequence must be an object".into()))?;
-
-    let per_str = seq_obj
-        .get("per")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ParseError("sequence requires 'per' field (connection or stub)".into()))?;
-
-    let per = match per_str {
-        "connection" => SequenceScope::Connection,
-        "stub" => SequenceScope::Stub,
-        other => {
-            return Err(ParseError(format!(
-                "sequence.per must be 'connection' or 'stub', got '{other}'"
-            )))
-        }
-    };
-
-    let replies_val = seq_obj
-        .get("replies")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| ParseError("sequence requires 'replies' array".into()))?;
-
-    if replies_val.is_empty() {
-        return Err(ParseError("sequence replies cannot be empty".into()));
-    }
-
-    let mut replies = Vec::with_capacity(replies_val.len());
-    for r in replies_val {
-        replies.push(parse_reply(r)?);
-    }
-
-    Ok(Some(SequenceSpec { per, replies }))
 }
 
 /// Parse a `CrudSpec` from an object (the value inside `crud!:` or `crud:`).
@@ -316,17 +213,6 @@ pub fn parse_crud_spec(crud_obj: &Map<String, Value>) -> Result<CrudSpec, ParseE
     };
 
     Ok(CrudSpec { id, seed })
-}
-
-fn parse_crud(obj: &Map<String, Value>) -> Result<Option<CrudSpec>, ParseError> {
-    let val = match obj.get("crud") {
-        None => return Ok(None),
-        Some(v) => v,
-    };
-    let crud_obj = val
-        .as_object()
-        .ok_or_else(|| ParseError("crud must be an object".into()))?;
-    Ok(Some(parse_crud_spec(crud_obj)?))
 }
 
 #[cfg(test)]
@@ -411,42 +297,6 @@ mod tests {
         .is_err());
     }
 
-    // --- Fail ---
-
-    #[test]
-    fn parse_fail_injection() {
-        let spec = parse_behavior(&json!({
-            "fail": {"rate": 0.1, "reply": {"s": 500, "b": "internal error"}}
-        }))
-        .unwrap();
-        let f = spec.fail.unwrap();
-        assert_eq!(f.rate, 0.1);
-        assert_eq!(f.reply.status, 500);
-    }
-
-    #[test]
-    fn parse_fail_rate_too_high() {
-        assert!(parse_behavior(&json!({
-            "fail": {"rate": 1.5, "reply": {"s": 500}}
-        }))
-        .is_err());
-    }
-
-    #[test]
-    fn parse_fail_rate_negative() {
-        assert!(parse_behavior(&json!({
-            "fail": {"rate": -0.1, "reply": {"s": 500}}
-        }))
-        .is_err());
-    }
-
-    #[test]
-    fn parse_fail_boundary_rates() {
-        // rate = 0.0 and 1.0 are valid
-        parse_behavior(&json!({"fail": {"rate": 0.0, "reply": {"s": 500}}})).unwrap();
-        parse_behavior(&json!({"fail": {"rate": 1.0, "reply": {"s": 500}}})).unwrap();
-    }
-
     // --- Timeout ---
 
     #[test]
@@ -470,97 +320,6 @@ mod tests {
         }
     }
 
-    // --- Sequence ---
-
-    #[test]
-    fn parse_sequence_per_connection() {
-        let spec = parse_behavior(&json!({
-            "sequence": {
-                "per": "connection",
-                "replies": [
-                    {"s": 401, "b": "unauthorized"},
-                    {"s": 200, "b": "ok"}
-                ]
-            }
-        }))
-        .unwrap();
-        let seq = spec.sequence.unwrap();
-        assert_eq!(seq.per, SequenceScope::Connection);
-        assert_eq!(seq.replies.len(), 2);
-        assert_eq!(seq.replies[0].status, 401);
-        assert_eq!(seq.replies[1].status, 200);
-    }
-
-    #[test]
-    fn parse_sequence_per_stub() {
-        let spec = parse_behavior(&json!({
-            "sequence": {
-                "per": "stub",
-                "replies": [{"s": 200}]
-            }
-        }))
-        .unwrap();
-        assert_eq!(spec.sequence.unwrap().per, SequenceScope::Stub);
-    }
-
-    #[test]
-    fn parse_sequence_empty_replies_error() {
-        assert!(parse_behavior(&json!({
-            "sequence": {"per": "stub", "replies": []}
-        }))
-        .is_err());
-    }
-
-    #[test]
-    fn parse_sequence_invalid_scope_error() {
-        assert!(parse_behavior(&json!({
-            "sequence": {"per": "invalid", "replies": [{"s": 200}]}
-        }))
-        .is_err());
-    }
-
-    // --- CRUD ---
-
-    #[test]
-    fn parse_crud_defaults() {
-        let spec = parse_behavior(&json!({
-            "crud": {
-                "seed": [
-                    {"id": 1, "name": "Ball", "price": 2.99}
-                ]
-            }
-        }))
-        .unwrap();
-        let crud = spec.crud.unwrap();
-        assert_eq!(crud.id.name, "id");
-        assert_eq!(crud.id.new, "inc");
-        assert_eq!(crud.seed.len(), 1);
-    }
-
-    #[test]
-    fn parse_crud_custom_id() {
-        let spec = parse_behavior(&json!({
-            "crud": {
-                "id": {"name": "sku", "new": "inc"},
-                "seed": []
-            }
-        }))
-        .unwrap();
-        let crud = spec.crud.unwrap();
-        assert_eq!(crud.id.name, "sku");
-    }
-
-    #[test]
-    fn parse_crud_no_seed() {
-        let spec = parse_behavior(&json!({"crud": {}})).unwrap();
-        assert!(spec.crud.unwrap().seed.is_empty());
-    }
-
-    #[test]
-    fn parse_crud_seed_not_array_error() {
-        assert!(parse_behavior(&json!({"crud": {"seed": "bad"}})).is_err());
-    }
-
     // --- General ---
 
     #[test]
@@ -578,12 +337,10 @@ mod tests {
     fn parse_multiple_behaviors() {
         let spec = parse_behavior(&json!({
             "conn": {"max": 5, "over": "block"},
-            "timeout": "30s",
-            "fail": {"rate": 0.1, "reply": {"s": 500}}
+            "timeout": "30s"
         }))
         .unwrap();
         assert!(spec.concurrency.is_some());
         assert!(spec.timeout.is_some());
-        assert!(spec.fail.is_some());
     }
 }

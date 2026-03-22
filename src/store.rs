@@ -120,10 +120,10 @@ mod tests {
                 method: method.map(|m| m.to_string()),
                 path: path.to_string(),
             },
-            reply: Some(ReplyStrategy::Static(ReplySpec {
+            reply: ReplyStrategy::Static(ReplySpec {
                 status,
                 ..Default::default()
-            })),
+            }),
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
             chaos: None,
@@ -133,10 +133,10 @@ mod tests {
     fn catch_all_stub(status: u16) -> Rule {
         Rule {
             match_rule: MatchRule::CatchAll,
-            reply: Some(ReplyStrategy::Static(ReplySpec {
+            reply: ReplyStrategy::Static(ReplySpec {
                 status,
                 ..Default::default()
-            })),
+            }),
             delivery: DeliverySpec::default(),
             behavior: BehaviorSpec::default(),
             chaos: None,
@@ -144,7 +144,7 @@ mod tests {
     }
 
     fn get_status(entry: &Arc<RuleEntry>) -> u16 {
-        match entry.rule.reply.as_ref().unwrap() {
+        match &entry.rule.reply {
             ReplyStrategy::Static(r) => r.status,
             _ => panic!("expected Static"),
         }

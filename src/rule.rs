@@ -1,7 +1,7 @@
 use crate::chaos::{ChaosEntry, parse_chaos};
 use crate::match_rule::{MatchRule, parse_match_rule};
-use crate::reply::{ReplySpec, ReplyStrategy, parse_reply, parse_reply_strategy};
-use crate::serve::{BehaviorSpec, DeliverySpec, parse_behavior, parse_delivery_fields, parse_serve};
+use crate::reply::{ReplyStrategy, parse_reply_strategy};
+use crate::serve::{BehaviorSpec, DeliverySpec, parse_serve};
 use crate::units::ParseError;
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ pub struct Rule {
     /// Which requests this rule matches.
     pub match_rule: MatchRule,
     /// How to produce replies (static, sequence, or CRUD).
-    pub reply: Option<ReplyStrategy>,
+    pub reply: ReplyStrategy,
     /// How to shape the response on the wire (delivery subset of serve).
     pub delivery: DeliverySpec,
     /// Endpoint-level policies (behavior subset of serve).
@@ -21,9 +21,6 @@ pub struct Rule {
 }
 
 /// Parse a single rule from a `serde_json::Value` object.
-///
-/// Accepts `serve:` (new, merged delivery + behavior) or legacy
-/// `delivery:` + `behavior:` (separate).
 pub fn parse_rule(v: &Value) -> Result<Rule, ParseError> {
     let obj = v
         .as_object()
@@ -34,41 +31,15 @@ pub fn parse_rule(v: &Value) -> Result<Rule, ParseError> {
         .ok_or_else(|| ParseError("rule requires 'match' field".into()))?;
     let match_rule = parse_match_rule(match_val)?;
 
-    let reply = match obj.get("reply") {
-        None => None,
-        Some(r) => Some(parse_reply_strategy(r)?),
+    let reply_val = obj
+        .get("reply")
+        .ok_or_else(|| ParseError("rule requires 'reply' field".into()))?;
+    let reply = parse_reply_strategy(reply_val)?;
+
+    let (delivery, behavior) = match obj.get("serve") {
+        Some(serve_val) => parse_serve(serve_val)?,
+        None => (DeliverySpec::default(), BehaviorSpec::default()),
     };
-
-    // Parse serve: (merged) or legacy delivery: + behavior:
-    let (delivery, behavior) = if let Some(serve_val) = obj.get("serve") {
-        parse_serve(serve_val)?
-    } else {
-        let delivery = match obj.get("delivery") {
-            None => DeliverySpec::default(),
-            Some(d) => {
-                let d_obj = d.as_object()
-                    .ok_or_else(|| ParseError("delivery must be an object".into()))?;
-                parse_delivery_fields(d_obj)?
-            }
-        };
-        let behavior = match obj.get("behavior") {
-            None => BehaviorSpec::default(),
-            Some(b) => parse_behavior(b)?,
-        };
-        (delivery, behavior)
-    };
-
-    // Validate: must have some way to produce a response
-    let has_reply = reply.is_some();
-    // Legacy: behavior.sequence and behavior.crud still work
-    let has_legacy_sequence = behavior.sequence.is_some();
-    let has_legacy_crud = behavior.crud.is_some();
-
-    if !has_reply && !has_legacy_sequence && !has_legacy_crud {
-        return Err(ParseError(
-            "rule must have 'reply' (static, sequence, or crud!)".into(),
-        ));
-    }
 
     let chaos = match obj.get("chaos") {
         None => None,
@@ -107,8 +78,11 @@ pub fn parse_rules(v: &Value) -> Result<Vec<Rule>, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serve::SequenceScope;
+    use crate::reply::{BodySpec, ReplySpec};
     use crate::serve::DropSpec;
+    use crate::match_rule::MatchRule;
+    use crate::units::{ByteSize, Range};
+    use serde_json::json;
 
     fn unwrap_static(strategy: &ReplyStrategy) -> &ReplySpec {
         match strategy {
@@ -116,10 +90,6 @@ mod tests {
             other => panic!("expected Static, got {other:?}"),
         }
     }
-    use crate::match_rule::MatchRule;
-    use crate::reply::BodySpec;
-    use crate::units::{ByteSize, Range};
-    use serde_json::json;
 
     #[test]
     fn parse_minimal_rule() {
@@ -135,7 +105,7 @@ mod tests {
                 path: "/path".into()
             }
         );
-        assert_eq!(unwrap_static(rule.reply.as_ref().unwrap()).status, 200);
+        assert_eq!(unwrap_static(&rule.reply).status, 200);
         assert_eq!(rule.delivery, DeliverySpec::default());
         assert_eq!(rule.behavior, BehaviorSpec::default());
     }
@@ -148,7 +118,6 @@ mod tests {
             "serve": {"first_byte": "2s", "pace": "5s", "conn": {"max": 5, "over": {"block": "3s", "then": {"s": 429}}}}
         }))
         .unwrap();
-        assert!(rule.reply.is_some());
         assert!(rule.delivery.first_byte.is_some());
         assert!(rule.delivery.pace.is_some());
         assert!(rule.behavior.concurrency.is_some());
@@ -159,10 +128,10 @@ mod tests {
         let rule = parse_rule(&json!({
             "match": {"_": "/download"},
             "reply": {"s": 200, "b": {"rand!": {"size": "10mb", "seed": 42}}},
-            "serve": {"speed": "10kb/s", "drop": "2kb"}
+            "serve": {"pace": "10kb/s", "drop": "2kb"}
         }))
         .unwrap();
-        let r = unwrap_static(rule.reply.as_ref().unwrap());
+        let r = unwrap_static(&rule.reply);
         match &r.body {
             BodySpec::Rand { size, seed } => {
                 assert_eq!(size.bytes(), 10 * 1024 * 1024);
@@ -177,46 +146,45 @@ mod tests {
     }
 
     #[test]
-    fn parse_rule_with_sequence_no_reply() {
+    fn parse_rule_with_sequence_reply() {
         let rule = parse_rule(&json!({
             "match": {"_": "/auth"},
-            "behavior": {
-                "sequence": {
-                    "per": "stub",
-                    "replies": [
-                        {"s": 401, "b": "unauthorized"},
-                        {"s": 200, "b": "ok"}
-                    ]
-                }
-            }
+            "reply": [
+                {"s": 401, "b": "unauthorized"},
+                {"s": 200, "b": "ok"}
+            ]
         }))
         .unwrap();
-        assert!(rule.reply.is_none());
-        let seq = rule.behavior.sequence.unwrap();
-        assert_eq!(seq.per, SequenceScope::Stub);
-        assert_eq!(seq.replies.len(), 2);
+        match &rule.reply {
+            ReplyStrategy::Sequence(replies) => {
+                assert_eq!(replies.len(), 2);
+                assert_eq!(replies[0].status, 401);
+                assert_eq!(replies[1].status, 200);
+            }
+            other => panic!("expected Sequence, got {other:?}"),
+        }
     }
 
     #[test]
-    fn parse_rule_with_crud_no_reply() {
+    fn parse_rule_with_crud_reply() {
         let rule = parse_rule(&json!({
             "match": {"_": "/toys"},
-            "behavior": {
-                "crud": {
-                    "seed": [
-                        {"id": 1, "name": "Ball"},
-                        {"id": 3, "name": "Owl"}
-                    ]
-                }
-            }
+            "reply": {"crud!": {"seed": [
+                {"id": 1, "name": "Ball"},
+                {"id": 3, "name": "Owl"}
+            ]}}
         }))
         .unwrap();
-        assert!(rule.reply.is_none());
-        assert!(rule.behavior.crud.is_some());
+        match &rule.reply {
+            ReplyStrategy::Crud { spec, .. } => {
+                assert_eq!(spec.seed.len(), 2);
+            }
+            other => panic!("expected Crud, got {other:?}"),
+        }
     }
 
     #[test]
-    fn parse_rule_error_no_response_source() {
+    fn parse_rule_error_no_reply() {
         assert!(parse_rule(&json!({
             "match": {"g": "/path"}
         }))
@@ -226,15 +194,6 @@ mod tests {
     #[test]
     fn parse_rule_error_no_match() {
         assert!(parse_rule(&json!({
-            "reply": {"s": 200}
-        }))
-        .is_err());
-    }
-
-    #[test]
-    fn parse_rule_error_invalid_match() {
-        assert!(parse_rule(&json!({
-            "match": 42,
             "reply": {"s": 200}
         }))
         .is_err());
@@ -255,7 +214,7 @@ mod tests {
         let rules = parse_rules(&json!([
             {"match": {"_": "/a"}, "reply": {"s": 200, "b": "a"}},
             {"match": {"_": "/b"}, "reply": {"s": 404}},
-            {"match": {"_": "/c"}, "reply": {"s": 200, "b": "c"}, "serve": {"span": "5s"}}
+            {"match": {"_": "/c"}, "reply": {"s": 200, "b": "c"}, "serve": {"pace": "5s"}}
         ]))
         .unwrap();
         assert_eq!(rules.len(), 3);
@@ -272,11 +231,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_rules_not_object_or_array() {
-        assert!(parse_rules(&json!("bad")).is_err());
-    }
-
-    #[test]
     fn parse_from_yaml_string() {
         let yaml = r#"
 match: {g: /toys/3}
@@ -284,28 +238,9 @@ reply: {s: 200, h: {ct!: j!}, b: {name: Owl, price: 5.99}}
 "#;
         let val = yttp::parse(yaml).unwrap();
         let rule = parse_rule(&val).unwrap();
-        let r = unwrap_static(rule.reply.as_ref().unwrap());
+        let r = unwrap_static(&rule.reply);
         assert_eq!(r.status, 200);
         assert_eq!(r.headers["Content-Type"], "application/json");
-    }
-
-    #[test]
-    fn parse_readme_crud_example_legacy() {
-        // Legacy format still works
-        let yaml = r#"
-match: {_: /toys}
-reply: {h: {ct!: j!}}
-delivery: {first_byte: {delay: 200ms}}
-behavior:
-  crud:
-    seed:
-      - {id: 1, name: Ball, price: 2.99}
-      - {id: 3, name: Owl, price: 5.99}
-"#;
-        let val = yttp::parse(yaml).unwrap();
-        let rule = parse_rule(&val).unwrap();
-        assert!(rule.behavior.crud.is_some());
-        assert!(rule.delivery.first_byte.is_some());
     }
 
     #[test]
@@ -323,5 +258,15 @@ behavior:
         assert!(rule.behavior.concurrency.is_some());
         assert!(rule.behavior.rate_limit.is_some());
         assert!(rule.behavior.timeout.is_some());
+    }
+
+    #[test]
+    fn parse_rule_error_legacy_behavior_rejected() {
+        // behavior: key is no longer accepted
+        assert!(parse_rule(&json!({
+            "match": {"_": "/path"},
+            "behavior": {"fail": {"rate": 0.5, "reply": {"s": 500}}}
+        }))
+        .is_err());
     }
 }
