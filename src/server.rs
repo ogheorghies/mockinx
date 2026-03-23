@@ -1,5 +1,5 @@
 use crate::chaos::{ChaosResult, resolve_chaos};
-use crate::reply::{BodySpec, ReplySpec};
+use crate::reply::{BodySpec, ReflectField, ReplySpec};
 use crate::reply::body::generate_body;
 use crate::reply::crud::CrudStore;
 use crate::rule::parse_rules;
@@ -8,14 +8,14 @@ use crate::serve::runtime::BehaviorResult;
 use crate::store::{RuleEntry, RuleStore};
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{HeaderName, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use bytes::Bytes;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
@@ -185,10 +185,13 @@ async fn handle_request(
     req: Request,
 ) -> Response {
     let method = req.method().as_str().to_string();
-    let path = req.uri().path().to_string();
+    let uri = req.uri().clone();
+    let path = uri.path().to_string();
+    let query_string = uri.query().unwrap_or("").to_string();
+    let headers = req.headers().clone();
     let peer_addr = Some(peer_addr);
 
-    // Read request body for CRUD operations
+    // Read request body
     let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, "failed to read body").into_response(),
@@ -214,7 +217,7 @@ async fn handle_request(
         None
     };
 
-    resolve_and_deliver(&state, &entry, &method, &path, &body_bytes, stub_idx, &mut rng, permit, peer_addr).await
+    resolve_and_deliver(&state, &entry, &method, &path, &query_string, &headers, &body_bytes, stub_idx, &mut rng, permit, peer_addr).await
 }
 
 async fn resolve_and_deliver(
@@ -222,6 +225,8 @@ async fn resolve_and_deliver(
     entry: &Arc<RuleEntry>,
     method: &str,
     path: &str,
+    query_string: &str,
+    headers: &HeaderMap,
     body_bytes: &Bytes,
     stub_idx: usize,
     rng: &mut StdRng,
@@ -274,6 +279,9 @@ async fn resolve_and_deliver(
         }
     };
 
+    // Resolve reflect! bodies — replace with literal JSON
+    let reply = resolve_reflect(reply, method, path, query_string, headers, body_bytes);
+
     // Use chaos delivery override if present, otherwise rule default
     let delivery = chaos_delivery.as_ref().unwrap_or(&entry.rule.delivery);
 
@@ -292,6 +300,99 @@ async fn resolve_and_deliver(
     } else {
         build_delivery_response(&reply, delivery, rng, permit).await
     }
+}
+
+fn resolve_reflect(
+    mut reply: ReplySpec,
+    method: &str,
+    path: &str,
+    query_string: &str,
+    headers: &HeaderMap,
+    body_bytes: &Bytes,
+) -> ReplySpec {
+    let fields = match &reply.body {
+        BodySpec::Reflect(fields) => fields.clone(),
+        _ => return reply,
+    };
+
+    let mut inner = Map::new();
+
+    for field in &fields {
+        match field {
+            ReflectField::Method => {
+                inner.insert("m".to_string(), Value::String(method.to_string()));
+            }
+            ReflectField::Headers => {
+                let mut h = Map::new();
+                for (name, value) in headers.iter() {
+                    let k = name.as_str().to_string();
+                    let v = value.to_str().unwrap_or("").to_string();
+                    h.insert(k, Value::String(v));
+                }
+                inner.insert("h".to_string(), Value::Object(h));
+            }
+            ReflectField::Url => {
+                inner.insert("u".to_string(), Value::String(path.to_string()));
+            }
+            ReflectField::Query => {
+                let mut q = Map::new();
+                if !query_string.is_empty() {
+                    for pair in query_string.split('&') {
+                        let mut parts = pair.splitn(2, '=');
+                        let key = parts.next().unwrap_or("");
+                        let val = parts.next().unwrap_or("");
+                        // URL decode
+                        let key = urldecode(key);
+                        let val = urldecode(val);
+                        q.insert(key, Value::String(val));
+                    }
+                }
+                inner.insert("q".to_string(), Value::Object(q));
+            }
+            ReflectField::Body => {
+                let body_val = if body_bytes.is_empty() {
+                    Value::Null
+                } else if let Ok(json) = serde_json::from_slice::<Value>(body_bytes) {
+                    json
+                } else if let Ok(s) = std::str::from_utf8(body_bytes) {
+                    Value::String(s.to_string())
+                } else {
+                    Value::Null
+                };
+                inner.insert("b".to_string(), body_val);
+            }
+        }
+    }
+
+    let reflected = serde_json::json!({ "i": inner });
+    reply.body = BodySpec::Literal(reflected);
+    // Set content-type to JSON if not already set
+    if !reply.headers.contains_key("content-type") {
+        reply.headers.insert(
+            "content-type".to_string(),
+            Value::String("application/json".to_string()),
+        );
+    }
+    reply
+}
+
+fn urldecode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'+' {
+            result.push(' ');
+        } else if b == b'%' {
+            let hi = chars.next().and_then(|c| (c as char).to_digit(16));
+            let lo = chars.next().and_then(|c| (c as char).to_digit(16));
+            if let (Some(h), Some(l)) = (hi, lo) {
+                result.push((h * 16 + l) as u8 as char);
+            }
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
 }
 
 fn resolve_crud_reply(

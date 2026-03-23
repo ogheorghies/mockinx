@@ -852,3 +852,134 @@ async fn malformed_rule_returns_400() {
     let resp = srv.register("not valid yaml {{{").await;
     assert_eq!(resp.status(), 400);
 }
+
+// =========================================================================
+// reflect! directive
+
+#[tokio::test]
+async fn reflect_true_returns_method_headers_url_query() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/reflect"},
+        "reply": {"s": 200, "b": {"reflect!": true}}
+    }))
+    .await;
+
+    let resp = reqwest::Client::new()
+        .get(&srv.url("/reflect?foo=bar"))
+        .header("X-Test", "yes")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["i"]["m"], "GET");
+    assert_eq!(body["i"]["u"], "/reflect");
+    assert_eq!(body["i"]["q"]["foo"], "bar");
+    assert_eq!(body["i"]["h"]["x-test"], "yes");
+    // Body should NOT be present with reflect!: true
+    assert!(body["i"].get("b").is_none(), "reflect!: true should not include body");
+}
+
+#[tokio::test]
+async fn reflect_selected_fields() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/reflect"},
+        "reply": {"s": 200, "b": {"reflect!": ["i.m"]}}
+    }))
+    .await;
+
+    let resp = reqwest::get(&srv.url("/reflect")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["i"]["m"], "GET");
+    // Only method requested — no headers, url, query
+    assert!(body["i"].get("h").is_none());
+    assert!(body["i"].get("u").is_none());
+    assert!(body["i"].get("q").is_none());
+}
+
+#[tokio::test]
+async fn reflect_includes_body_when_requested() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"p": "/reflect"},
+        "reply": {"s": 200, "b": {"reflect!": ["i.m", "i.b"]}}
+    }))
+    .await;
+
+    let resp = reqwest::Client::new()
+        .post(&srv.url("/reflect"))
+        .json(&serde_json::json!({"key": "val"}))
+        .send()
+        .await
+        .unwrap();
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["i"]["m"], "POST");
+    assert_eq!(body["i"]["b"]["key"], "val");
+}
+
+#[tokio::test]
+async fn reflect_body_string_fallback() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"p": "/reflect"},
+        "reply": {"s": 200, "b": {"reflect!": ["i.b"]}}
+    }))
+    .await;
+
+    let resp = reqwest::Client::new()
+        .post(&srv.url("/reflect"))
+        .body("plain text body")
+        .send()
+        .await
+        .unwrap();
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["i"]["b"], "plain text body");
+}
+
+#[tokio::test]
+async fn reflect_empty_body_is_null() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/reflect"},
+        "reply": {"s": 200, "b": {"reflect!": ["i.b"]}}
+    }))
+    .await;
+
+    let resp = reqwest::get(&srv.url("/reflect")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["i"]["b"].is_null());
+}
+
+#[tokio::test]
+async fn reflect_query_params_decoded() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/reflect"},
+        "reply": {"s": 200, "b": {"reflect!": ["i.q"]}}
+    }))
+    .await;
+
+    let resp = reqwest::get(&srv.url("/reflect?key=hello+world&x=a%26b")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["i"]["q"]["key"], "hello world");
+    assert_eq!(body["i"]["q"]["x"], "a&b");
+}
+
+#[tokio::test]
+async fn reflect_no_query_returns_empty_object() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/reflect"},
+        "reply": {"s": 200, "b": {"reflect!": ["i.q"]}}
+    }))
+    .await;
+
+    let resp = reqwest::get(&srv.url("/reflect")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["i"]["q"], serde_json::json!({}));
+}

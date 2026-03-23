@@ -5,6 +5,16 @@ use crate::serve::CrudSpec;
 use crate::units::{ByteSize, ParseError, parse_byte_size};
 use serde_json::{Map, Value};
 
+/// Fields that can be reflected back in a reflect! response.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReflectField {
+    Method,
+    Headers,
+    Url,
+    Query,
+    Body,
+}
+
 /// Specification for the body of a reply.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BodySpec {
@@ -16,6 +26,8 @@ pub enum BodySpec {
     Rand { size: ByteSize, seed: u64 },
     /// Repeated pattern string, truncated to size.
     Pattern { repeat: String, size: ByteSize },
+    /// Reflect request fields back as JSON.
+    Reflect(Vec<ReflectField>),
 }
 
 /// Specification for an HTTP reply: status, headers, body.
@@ -160,12 +172,51 @@ fn parse_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
                 parse_rand_body(b, "rand!")
             } else if b.contains_key("pattern!") {
                 parse_pattern_body(b, "pattern!")
+            } else if b.contains_key("reflect!") {
+                parse_reflect_body(b)
             } else {
                 // Regular JSON object literal (no ! = literal data)
                 Ok(BodySpec::Literal(Value::Object(b.clone())))
             }
         }
         Some(v) => Ok(BodySpec::Literal(v.clone())),
+    }
+}
+
+fn parse_reflect_field(s: &str) -> Result<ReflectField, ParseError> {
+    match s {
+        "i.m" => Ok(ReflectField::Method),
+        "i.h" => Ok(ReflectField::Headers),
+        "i.u" => Ok(ReflectField::Url),
+        "i.q" => Ok(ReflectField::Query),
+        "i.b" => Ok(ReflectField::Body),
+        _ => Err(ParseError::new(format!("unknown reflect field: {s} (expected i.m, i.h, i.u, i.q, i.b)"))),
+    }
+}
+
+fn parse_reflect_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
+    let val = obj.get("reflect!").unwrap();
+    match val {
+        // reflect!: true → all except body
+        Value::Bool(true) => Ok(BodySpec::Reflect(vec![
+            ReflectField::Method,
+            ReflectField::Headers,
+            ReflectField::Url,
+            ReflectField::Query,
+        ])),
+        // reflect!: [i.m, i.h, ...]
+        Value::Array(arr) => {
+            let fields: Result<Vec<_>, _> = arr.iter().map(|v| {
+                let s = v.as_str().ok_or_else(|| ParseError::new("reflect! array elements must be strings"))?;
+                parse_reflect_field(s)
+            }).collect();
+            let fields = fields?;
+            if fields.is_empty() {
+                return Err(ParseError::new("reflect! array cannot be empty"));
+            }
+            Ok(BodySpec::Reflect(fields))
+        }
+        _ => Err(ParseError::new("reflect! must be true or an array of field names")),
     }
 }
 

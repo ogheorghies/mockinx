@@ -73,6 +73,12 @@ reply: {crud!: {data: [{id: 1, name: Ball}, {id: 3, name: Owl}]}}
 reply: {crud!: {id: {name: sku, new: inc}}}         # auto-increment IDs
 reply: {crud!: {id: {name: uid, new: uuid}}}        # UUID IDs
 reply: {crud!: true}                                # no data, id: "id", inc
+
+# reflect — echo request back as JSON (for testing)
+reply: {s: 200, b: {reflect!: true}}                # {i: {m, h, u, q}} (no body)
+reply: {s: 200, b: {reflect!: [i.m, i.h]}}          # selected fields
+reply: {s: 200, b: {reflect!: [i.m, i.h, i.b]}}     # include body (explicit only)
+# fields: i.m (method), i.h (headers), i.u (path), i.q (query), i.b (body)
 ```
 
 ### serve
