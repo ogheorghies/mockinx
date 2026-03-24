@@ -171,7 +171,7 @@ fn parse_body_as_rules(body: &Bytes) -> Result<Vec<crate::rule::Rule>, Response>
     let body_str = std::str::from_utf8(body)
         .map_err(|_| plain_error(StatusCode::BAD_REQUEST, "invalid UTF-8"))?;
 
-    let val = yttp::parse(body_str)
+    let val = yttp::from_str(body_str)
         .map_err(|e| plain_error(StatusCode::BAD_REQUEST, format!("parse error: {e}")))?;
 
     parse_rules(&val)

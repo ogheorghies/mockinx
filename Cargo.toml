@@ -1,6 +1,6 @@
 [package]
 name = "mockinx"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Codeless mock server: OK, Error, fast, slow, pacing, drops, throttling, chaos"
 keywords = ["mock", "http", "testing", "chaos", "throttle"]
@@ -21,7 +21,7 @@ indexmap = { version = "2", features = ["serde"] }
 tokio-stream = "0.1"
 clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
-yttp = "0.0.5"
+yttp = "0.0.7"
 
 [[example]]
 name = "baseline-server"
