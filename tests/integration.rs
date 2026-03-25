@@ -444,7 +444,7 @@ async fn config_file_loading() {
     let state = AppState::new();
     let content = std::fs::read_to_string(&config_path).unwrap();
     let val = yttp::parse(&content).unwrap();
-    let rules = mockinx::rule::parse_rules(&val).unwrap();
+    let rules = mockinx::rule::parse_rules(&val, None).unwrap();
     state.register_rules(rules);
 
     let app = build_router(state);
@@ -546,7 +546,7 @@ async fn start_with_fixture() -> TestServer {
         .join("tests/fixtures/rules.yaml");
     let content = std::fs::read_to_string(&fixture).unwrap();
     let val = yttp::parse(&content).unwrap();
-    let rules = mockinx::rule::parse_rules(&val).unwrap();
+    let rules = mockinx::rule::parse_rules(&val, None).unwrap();
     state.register_rules(rules);
 
     let app = build_router(state.clone());

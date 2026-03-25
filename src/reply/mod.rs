@@ -4,7 +4,7 @@ pub mod crud;
 use crate::serve::CrudSpec;
 use crate::units::{ByteSize, ParseError, parse_byte_size};
 use serde_json::{Map, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Fields that can be reflected back in a reflect! response.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,7 +76,7 @@ pub enum ReplyStrategy {
 /// - Array → Sequence
 /// - Object with `crud!` → Crud
 /// - Object with s/h/b → Static
-pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
+pub fn parse_reply_strategy(v: &Value, base_dir: Option<&Path>) -> Result<ReplyStrategy, ParseError> {
     match v {
         Value::Array(arr) => {
             if arr.is_empty() {
@@ -84,7 +84,7 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
             }
             let mut replies = Vec::with_capacity(arr.len());
             for item in arr {
-                replies.push(parse_reply(item)?);
+                replies.push(parse_reply(item, base_dir)?);
             }
             Ok(ReplyStrategy::Sequence(replies))
         }
@@ -111,7 +111,7 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
                 yttp::expand_headers(&mut headers);
                 Ok(ReplyStrategy::Crud { spec, headers })
             } else {
-                Ok(ReplyStrategy::Static(parse_reply(v)?))
+                Ok(ReplyStrategy::Static(parse_reply(v, base_dir)?))
             }
         }
         _ => Err(ParseError::new(format!("reply must be an object or array, got {v}"))),
@@ -122,14 +122,14 @@ pub fn parse_reply_strategy(v: &Value) -> Result<ReplyStrategy, ParseError> {
 ///
 /// Expects an object with optional keys `s` (status), `h` (headers), `b` (body).
 /// Missing fields use defaults: status=200, headers=empty, body=None.
-pub fn parse_reply(v: &Value) -> Result<ReplySpec, ParseError> {
+pub fn parse_reply(v: &Value, base_dir: Option<&Path>) -> Result<ReplySpec, ParseError> {
     let obj = v
         .as_object()
         .ok_or_else(|| ParseError::new("reply must be an object"))?;
 
     let status = parse_status(obj)?;
     let headers = parse_headers(obj)?;
-    let body = parse_body(obj)?;
+    let body = parse_body(obj, base_dir)?;
 
     Ok(ReplySpec {
         status,
@@ -166,7 +166,7 @@ fn parse_headers(obj: &Map<String, Value>) -> Result<Map<String, Value>, ParseEr
     }
 }
 
-fn parse_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
+fn parse_body(obj: &Map<String, Value>, base_dir: Option<&Path>) -> Result<BodySpec, ParseError> {
     match obj.get("b") {
         None => Ok(BodySpec::None),
         Some(Value::Object(b)) => {
@@ -180,7 +180,17 @@ fn parse_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
             } else if b.contains_key("file!") {
                 let path = b.get("file!").and_then(|v| v.as_str())
                     .ok_or_else(|| ParseError::new("file! must be a string path"))?;
-                Ok(BodySpec::File(PathBuf::from(path)))
+                let path = PathBuf::from(path);
+                let path = if path.is_relative() {
+                    if let Some(base) = base_dir {
+                        base.join(&path)
+                    } else {
+                        path
+                    }
+                } else {
+                    path
+                };
+                Ok(BodySpec::File(path))
             } else {
                 // Regular JSON object literal (no ! = literal data)
                 Ok(BodySpec::Literal(Value::Object(b.clone())))
@@ -286,7 +296,7 @@ mod tests {
     #[test]
     fn parse_full_reply() {
         let v = yttp::parse("{s: 200, h: {ct!: j!}, b: {name: Owl}}").unwrap();
-        let reply = parse_reply(&v).unwrap();
+        let reply = parse_reply(&v, None).unwrap();
         assert_eq!(reply.status, 200);
         assert_eq!(reply.headers["Content-Type"], "application/json");
         match &reply.body {
@@ -297,7 +307,7 @@ mod tests {
 
     #[test]
     fn parse_status_only() {
-        let reply = parse_reply(&json!({"s": 204})).unwrap();
+        let reply = parse_reply(&json!({"s": 204}), None).unwrap();
         assert_eq!(reply.status, 204);
         assert!(reply.headers.is_empty());
         assert_eq!(reply.body, BodySpec::None);
@@ -305,20 +315,20 @@ mod tests {
 
     #[test]
     fn parse_default_status() {
-        let reply = parse_reply(&json!({"b": "hello"})).unwrap();
+        let reply = parse_reply(&json!({"b": "hello"}), None).unwrap();
         assert_eq!(reply.status, 200);
     }
 
     #[test]
     fn parse_string_body() {
-        let reply = parse_reply(&json!({"s": 200, "b": "hello"})).unwrap();
+        let reply = parse_reply(&json!({"s": 200, "b": "hello"}), None).unwrap();
         assert_eq!(reply.body, BodySpec::Literal(json!("hello")));
     }
 
     #[test]
     fn parse_rand_body() {
         let v = json!({"s": 200, "b": {"rand!": {"size": "10kb", "seed": 7}}});
-        let reply = parse_reply(&v).unwrap();
+        let reply = parse_reply(&v, None).unwrap();
         match &reply.body {
             BodySpec::Rand { size, seed } => {
                 assert_eq!(size.bytes(), 10240);
@@ -331,7 +341,7 @@ mod tests {
     #[test]
     fn parse_pattern_body() {
         let v = json!({"s": 200, "b": {"pattern!": {"repeat": "abc", "size": "1mb"}}});
-        let reply = parse_reply(&v).unwrap();
+        let reply = parse_reply(&v, None).unwrap();
         match &reply.body {
             BodySpec::Pattern { repeat, size } => {
                 assert_eq!(repeat, "abc");
@@ -344,14 +354,14 @@ mod tests {
     #[test]
     fn parse_header_shortcuts() {
         let v = yttp::parse("{s: 200, h: {ct!: t!}}").unwrap();
-        let reply = parse_reply(&v).unwrap();
+        let reply = parse_reply(&v, None).unwrap();
         assert_eq!(reply.headers["Content-Type"], "text/plain");
     }
 
     #[test]
     fn parse_malformed_content_type() {
         let v = yttp::parse("{s: 200, h: {ct!: h!}, b: '{\"valid\": \"json\"}'}").unwrap();
-        let reply = parse_reply(&v).unwrap();
+        let reply = parse_reply(&v, None).unwrap();
         assert_eq!(reply.headers["Content-Type"], "text/html");
         match &reply.body {
             BodySpec::Literal(val) => assert!(val.as_str().unwrap().contains("valid")),
@@ -361,71 +371,71 @@ mod tests {
 
     #[test]
     fn parse_minimal_overflow_reply() {
-        let reply = parse_reply(&json!({"s": 429})).unwrap();
+        let reply = parse_reply(&json!({"s": 429}), None).unwrap();
         assert_eq!(reply.status, 429);
         assert_eq!(reply.body, BodySpec::None);
     }
 
     #[test]
     fn parse_overflow_with_body() {
-        let reply = parse_reply(&json!({"s": 429, "b": "too many"})).unwrap();
+        let reply = parse_reply(&json!({"s": 429, "b": "too many"}), None).unwrap();
         assert_eq!(reply.status, 429);
         assert_eq!(reply.body, BodySpec::Literal(json!("too many")));
     }
 
     #[test]
     fn parse_error_status_too_large() {
-        assert!(parse_reply(&json!({"s": 1000})).is_err());
+        assert!(parse_reply(&json!({"s": 1000}), None).is_err());
     }
 
     #[test]
     fn parse_error_status_negative() {
-        assert!(parse_reply(&json!({"s": -1})).is_err());
+        assert!(parse_reply(&json!({"s": -1}), None).is_err());
     }
 
     #[test]
     fn parse_error_status_not_number() {
-        assert!(parse_reply(&json!({"s": "200"})).is_err());
+        assert!(parse_reply(&json!({"s": "200"}), None).is_err());
     }
 
     #[test]
     fn parse_error_headers_not_object() {
-        assert!(parse_reply(&json!({"h": "bad"})).is_err());
+        assert!(parse_reply(&json!({"h": "bad"}), None).is_err());
     }
 
     #[test]
     fn parse_error_not_object() {
-        assert!(parse_reply(&json!("string")).is_err());
-        assert!(parse_reply(&json!(42)).is_err());
+        assert!(parse_reply(&json!("string"), None).is_err());
+        assert!(parse_reply(&json!(42), None).is_err());
     }
 
     #[test]
     fn parse_error_rand_missing_size() {
         let v = json!({"b": {"rand!": {"seed": 7}}});
-        assert!(parse_reply(&v).is_err());
+        assert!(parse_reply(&v, None).is_err());
     }
 
     #[test]
     fn parse_error_rand_missing_seed() {
         let v = json!({"b": {"rand!": {"size": "10kb"}}});
-        assert!(parse_reply(&v).is_err());
+        assert!(parse_reply(&v, None).is_err());
     }
 
     #[test]
     fn parse_error_pattern_empty_repeat() {
         let v = json!({"b": {"pattern!": {"repeat": "", "size": "1kb"}}});
-        assert!(parse_reply(&v).is_err());
+        assert!(parse_reply(&v, None).is_err());
     }
 
     #[test]
     fn parse_error_pattern_missing_size() {
         let v = json!({"b": {"pattern!": {"repeat": "abc"}}});
-        assert!(parse_reply(&v).is_err());
+        assert!(parse_reply(&v, None).is_err());
     }
 
     #[test]
     fn parse_json_object_body() {
-        let reply = parse_reply(&json!({"s": 200, "b": {"items": [1, 2, 3]}})).unwrap();
+        let reply = parse_reply(&json!({"s": 200, "b": {"items": [1, 2, 3]}}), None).unwrap();
         match &reply.body {
             BodySpec::Literal(val) => {
                 assert_eq!(val["items"], json!([1, 2, 3]));
@@ -436,19 +446,39 @@ mod tests {
 
     #[test]
     fn parse_number_body() {
-        let reply = parse_reply(&json!({"b": 42})).unwrap();
+        let reply = parse_reply(&json!({"b": 42}), None).unwrap();
         assert_eq!(reply.body, BodySpec::Literal(json!(42)));
     }
 
     #[test]
     fn parse_bool_body() {
-        let reply = parse_reply(&json!({"b": true})).unwrap();
+        let reply = parse_reply(&json!({"b": true}), None).unwrap();
         assert_eq!(reply.body, BodySpec::Literal(json!(true)));
     }
 
     #[test]
     fn parse_array_body() {
-        let reply = parse_reply(&json!({"b": [1, 2, 3]})).unwrap();
+        let reply = parse_reply(&json!({"b": [1, 2, 3]}), None).unwrap();
         assert_eq!(reply.body, BodySpec::Literal(json!([1, 2, 3])));
+    }
+
+    #[test]
+    fn file_path_resolved_relative_to_base_dir() {
+        let base = Path::new("/srv/configs");
+        let reply = parse_reply(&json!({"b": {"file!": "data.json"}}), Some(base)).unwrap();
+        assert_eq!(reply.body, BodySpec::File(PathBuf::from("/srv/configs/data.json")));
+    }
+
+    #[test]
+    fn file_absolute_path_unchanged_with_base_dir() {
+        let base = Path::new("/srv/configs");
+        let reply = parse_reply(&json!({"b": {"file!": "/tmp/data.json"}}), Some(base)).unwrap();
+        assert_eq!(reply.body, BodySpec::File(PathBuf::from("/tmp/data.json")));
+    }
+
+    #[test]
+    fn file_relative_path_without_base_dir() {
+        let reply = parse_reply(&json!({"b": {"file!": "data.json"}}), None).unwrap();
+        assert_eq!(reply.body, BodySpec::File(PathBuf::from("data.json")));
     }
 }

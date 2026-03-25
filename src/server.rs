@@ -174,7 +174,7 @@ fn parse_body_as_rules(body: &Bytes) -> Result<Vec<crate::rule::Rule>, Response>
     let val = yttp::from_str(body_str)
         .map_err(|e| plain_error(StatusCode::BAD_REQUEST, format!("parse error: {e}")))?;
 
-    parse_rules(&val)
+    parse_rules(&val, None)
         .map_err(|e| plain_error(StatusCode::BAD_REQUEST, format!("{e}")))
 }
 

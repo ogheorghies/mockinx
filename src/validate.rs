@@ -81,7 +81,7 @@ mod tests {
             "match": {"g": "/test"},
             "reply": {"s": 200, "b": "ok"},
             "serve": {"pace": "5s", "drop": "500ms"}
-        }))
+        }), None)
         .unwrap();
         let warnings = validate_rule(&rule, None);
         assert_eq!(warnings.len(), 1);
@@ -94,7 +94,7 @@ mod tests {
             "match": {"g": "/test"},
             "reply": {"s": 200, "b": "ok"},
             "serve": {"pace": "1s", "drop": "5s"}
-        }))
+        }), None)
         .unwrap();
         let warnings = validate_rule(&rule, None);
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
@@ -109,7 +109,7 @@ mod tests {
                 {"p": "60%", "reply": {"s": 500}},
                 {"p": "40%", "reply": {"s": 503}}
             ]
-        }))
+        }), None)
         .unwrap();
         let warnings = validate_rule(&rule, None);
         assert_eq!(warnings.len(), 1);
@@ -122,7 +122,7 @@ mod tests {
             "match": {"g": "/test"},
             "reply": {"s": 200, "b": "ok"},
             "chaos": [{"p": "50%", "reply": {"s": 500}}]
-        }))
+        }), None)
         .unwrap();
         let warnings = validate_rule(&rule, None);
         assert!(warnings.is_empty());
@@ -133,7 +133,7 @@ mod tests {
         let rule = parse_rule(&json!({
             "match": {"g": "/test"},
             "reply": {"s": 200, "b": "ok"}
-        }))
+        }), None)
         .unwrap();
         let warnings = validate_rule(&rule, None);
         assert!(warnings.is_empty());
@@ -145,14 +145,14 @@ mod tests {
             parse_rule(&json!({
                 "match": {"g": "/ok"},
                 "reply": {"s": 200}
-            })).unwrap(),
+            }), None).unwrap(),
             parse_rule(&json!({
                 "match": {"g": "/bad"},
                 "reply": {"s": 200},
                 "chaos": [
                     {"p": "100%", "reply": {"s": 500}}
                 ]
-            })).unwrap(),
+            }), None).unwrap(),
         ];
         let warnings = validate_rules(&rules);
         assert_eq!(warnings.len(), 1);

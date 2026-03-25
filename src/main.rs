@@ -50,9 +50,11 @@ async fn main() {
 }
 
 fn load_config(path: &str, state: &AppState) -> Result<usize, String> {
+    let config_path = std::path::Path::new(path);
+    let base_dir = config_path.parent();
     let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
     let val = yttp::from_str(&content).map_err(|e| format!("parse error: {e}"))?;
-    let rules = parse_rules(&val).map_err(|e| format!("rule error: {e}"))?;
+    let rules = parse_rules(&val, base_dir).map_err(|e| format!("rule error: {e}"))?;
     let count = rules.len();
     let warnings = mockinx::validate::validate_rules(&rules);
     for w in &warnings {

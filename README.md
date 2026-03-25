@@ -81,6 +81,7 @@ reply: {s: 200, b: {reflect!: [i.m, i.h, i.b]}}     # include body (explicit onl
 # fields: i.m (method), i.h (headers), i.u (path), i.q (query), i.b (body)
 
 # file — serve body from a file (re-read on each request)
+# relative paths resolve from the config file's directory
 reply: {s: 200, b: {file!: "fixtures/response.json"}}
 ```
 

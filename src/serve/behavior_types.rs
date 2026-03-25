@@ -138,12 +138,12 @@ fn parse_overflow_action(obj: &Map<String, Value>) -> Result<OverflowAction, Par
         let then_val = over_obj
             .get("then")
             .ok_or_else(|| ParseError::new("block requires 'then' reply"))?;
-        let then = parse_reply(then_val)?;
+        let then = parse_reply(then_val, None)?;
 
         Ok(OverflowAction::BlockWithTimeout { timeout, then })
     } else {
         // Reply
-        Ok(OverflowAction::Reply(parse_reply(over_val)?))
+        Ok(OverflowAction::Reply(parse_reply(over_val, None)?))
     }
 }
 
@@ -165,7 +165,7 @@ fn parse_rps(obj: &Map<String, Value>) -> Result<Option<RateLimitSpec>, ParseErr
     let over_val = rl_obj
         .get("over")
         .ok_or_else(|| ParseError::new("rps requires 'over' reply"))?;
-    let over = parse_reply(over_val)?;
+    let over = parse_reply(over_val, None)?;
 
     Ok(Some(RateLimitSpec {
         rps: max as u32,

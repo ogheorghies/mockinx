@@ -15,7 +15,7 @@ fn process_fixture(content: &str) -> String {
         Err(e) => return format!("{e}"),
     };
 
-    match mockinx::rule::parse_rules(&val) {
+    match mockinx::rule::parse_rules(&val, None) {
         Err(e) => format!("{e}"),
         Ok(rules) => {
             let warnings = mockinx::validate::validate_rules(&rules);

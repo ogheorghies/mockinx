@@ -1,6 +1,6 @@
 [package]
 name = "mockinx"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Codeless mock server: OK, Error, fast, slow, pacing, drops, throttling, chaos"
 keywords = ["mock", "http", "testing", "chaos", "throttle"]

@@ -83,7 +83,7 @@ pub fn parse_chaos(v: &Value) -> Result<Vec<ChaosEntry>, ParseError> {
         }
 
         let reply = match obj.get("reply") {
-            Some(v) => Some(parse_reply(v)?),
+            Some(v) => Some(parse_reply(v, None)?),
             None => None,
         };
 
