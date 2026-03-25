@@ -79,6 +79,9 @@ reply: {s: 200, b: {reflect!: true}}                # {i: {m, h, u, q}} (no body
 reply: {s: 200, b: {reflect!: [i.m, i.h]}}          # selected fields
 reply: {s: 200, b: {reflect!: [i.m, i.h, i.b]}}     # include body (explicit only)
 # fields: i.m (method), i.h (headers), i.u (path), i.q (query), i.b (body)
+
+# file — serve body from a file (re-read on each request)
+reply: {s: 200, b: {file!: "fixtures/response.json"}}
 ```
 
 ### serve

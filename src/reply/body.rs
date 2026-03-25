@@ -14,6 +14,9 @@ pub fn generate_body(spec: &BodySpec) -> Vec<u8> {
         BodySpec::Rand { size, seed } => generate_rand(size.bytes() as usize, *seed),
         BodySpec::Pattern { repeat, size } => generate_pattern(repeat, size.bytes() as usize),
         BodySpec::Reflect(_) => unreachable!("reflect! should be resolved before body generation"),
+        BodySpec::File(path) => std::fs::read(path).unwrap_or_else(|e| {
+            format!("error reading {}: {e}", path.display()).into_bytes()
+        }),
     }
 }
 
@@ -64,6 +67,7 @@ impl BodyChunks {
             BodySpec::Literal(_) => (None, None, Some(generate_body(spec))),
             BodySpec::None => (None, None, None),
             BodySpec::Reflect(_) => unreachable!("reflect! should be resolved before chunking"),
+            BodySpec::File(_) => (None, None, Some(generate_body(spec))),
         };
 
         BodyChunks {
@@ -110,6 +114,10 @@ impl Iterator for BodyChunks {
                 data[self.offset..self.offset + len].to_vec()
             }
             BodySpec::Reflect(_) => unreachable!("reflect! should be resolved before chunking"),
+            BodySpec::File(_) => {
+                let data = self.literal.as_ref().unwrap();
+                data[self.offset..self.offset + len].to_vec()
+            }
         };
 
         self.offset += len;
@@ -128,6 +136,7 @@ fn body_size(spec: &BodySpec) -> usize {
         BodySpec::Rand { size, .. } => size.bytes() as usize,
         BodySpec::Pattern { size, .. } => size.bytes() as usize,
         BodySpec::Reflect(_) => unreachable!("reflect! should be resolved before size calculation"),
+        BodySpec::File(path) => std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0),
     }
 }
 

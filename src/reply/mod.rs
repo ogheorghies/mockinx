@@ -4,6 +4,7 @@ pub mod crud;
 use crate::serve::CrudSpec;
 use crate::units::{ByteSize, ParseError, parse_byte_size};
 use serde_json::{Map, Value};
+use std::path::PathBuf;
 
 /// Fields that can be reflected back in a reflect! response.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +29,8 @@ pub enum BodySpec {
     Pattern { repeat: String, size: ByteSize },
     /// Reflect request fields back as JSON.
     Reflect(Vec<ReflectField>),
+    /// Read body from a file at response time.
+    File(PathBuf),
 }
 
 /// Specification for an HTTP reply: status, headers, body.
@@ -174,6 +177,10 @@ fn parse_body(obj: &Map<String, Value>) -> Result<BodySpec, ParseError> {
                 parse_pattern_body(b, "pattern!")
             } else if b.contains_key("reflect!") {
                 parse_reflect_body(b)
+            } else if b.contains_key("file!") {
+                let path = b.get("file!").and_then(|v| v.as_str())
+                    .ok_or_else(|| ParseError::new("file! must be a string path"))?;
+                Ok(BodySpec::File(PathBuf::from(path)))
             } else {
                 // Regular JSON object literal (no ! = literal data)
                 Ok(BodySpec::Literal(Value::Object(b.clone())))

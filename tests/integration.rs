@@ -983,3 +983,72 @@ async fn reflect_no_query_returns_empty_object() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["i"]["q"], serde_json::json!({}));
 }
+
+// =========================================================================
+// file! directive
+
+#[tokio::test]
+async fn file_body_returns_file_contents() {
+    let srv = TestServer::start().await;
+
+    // Write a temp file
+    let dir = std::env::temp_dir();
+    let path = dir.join("mockinx_test_file.json");
+    std::fs::write(&path, r#"{"hello":"world"}"#).unwrap();
+
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/file"},
+        "reply": {"s": 200, "b": {"file!": path.to_str().unwrap()}}
+    }))
+    .await;
+
+    let resp = reqwest::get(&srv.url("/file")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["hello"], "world");
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[tokio::test]
+async fn file_body_missing_file() {
+    let srv = TestServer::start().await;
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/missing"},
+        "reply": {"s": 200, "b": {"file!": "/nonexistent/file.json"}}
+    }))
+    .await;
+
+    let resp = reqwest::get(&srv.url("/missing")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("error reading"), "should contain error: {body}");
+}
+
+#[tokio::test]
+async fn file_body_hot_reload() {
+    let srv = TestServer::start().await;
+
+    let dir = std::env::temp_dir();
+    let path = dir.join("mockinx_test_hotreload.json");
+    std::fs::write(&path, r#"{"version":1}"#).unwrap();
+
+    srv.register_json(&serde_json::json!({
+        "match": {"g": "/hot"},
+        "reply": {"s": 200, "b": {"file!": path.to_str().unwrap()}}
+    }))
+    .await;
+
+    // First request
+    let body: serde_json::Value = reqwest::get(&srv.url("/hot")).await.unwrap().json().await.unwrap();
+    assert_eq!(body["version"], 1);
+
+    // Modify file
+    std::fs::write(&path, r#"{"version":2}"#).unwrap();
+
+    // Second request — should see updated content
+    let body: serde_json::Value = reqwest::get(&srv.url("/hot")).await.unwrap().json().await.unwrap();
+    assert_eq!(body["version"], 2);
+
+    std::fs::remove_file(&path).ok();
+}
